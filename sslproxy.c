@@ -145,7 +145,7 @@ static void handle_ssl_error(int n, int r) {
 	}
 }
 
-static int ssl_read(struct con *c) {
+static void ssl_read(struct con *c) {
 	struct buf *buf;
 
 	if (c->other) {
@@ -153,14 +153,13 @@ static int ssl_read(struct con *c) {
 	} else if (c->buf && c->buf->len < 0) {
 		buf = c->buf;
 	} else {
-		return 1;
+		return;
 	}
 
 	buf->start = 0;
 	buf->len = SSL_read(c->s, buf->data, sizeof buf->data);
 	if (buf->len <= 0)
 		handle_ssl_error(c - cons, buf->len);
-	return buf->len;
 }
 
 static int ssl_write(struct con *c) {
@@ -247,12 +246,14 @@ static void after_poll() {
 	for (i = fd_count; --i > 0; ) {
 		struct con *c = cons + i;
 
+		ev[i].events = POLLHUP;
 		if (c->s) {
 			if ((ev[i].revents & (POLLIN | POLLOUT)) &&
-			    ((c->buf && c->buf->len > 0 && ssl_write(c) <= 0 ||
-			     ssl_read(c) <= 0)))
-			    continue;
-		} else if ((ev[i].revents & POLLHUP) ||
+			    (!c->buf || c->buf->len <= 0 || ssl_write(c) > 0))
+			     ssl_read(c);
+			continue;
+		}
+		if ((ev[i].revents & POLLHUP) ||
 			   (ev[i].revents & POLLOUT) && c->buf->len > 0 &&
 		           	!plain_write(ev[i].fd, c->buf) ||
 		           (ev[i].revents & POLLIN) &&
