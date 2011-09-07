@@ -2,6 +2,7 @@
 #include <sys/socket.h>
 #include <signal.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <stdio.h>
@@ -132,27 +133,53 @@ static void free_context() {
 	CRYPTO_cleanup_all_ex_data();
 }
 
-static int ssl_read(int n) {
+static void handle_ssl_error(int n, int r) {
+	r = SSL_get_error(cons[n].s, r);
+	if (r == SSL_ERROR_WANT_READ) {
+		ev[n].events |= POLLIN;
+	} else if (r == SSL_ERROR_WANT_WRITE) {
+		ev[n].events |= POLLOUT;
+	} else {
+		rm_conn(n);
+	}
+}
+
+static void ssl_read(int n) {
 	struct buf *buf = cons[n].buf;
 
 	buf->len = SSL_read(cons[n].s, buf->data, sizeof buf->data);
-	if (buf->len > 0)
-		return 1;
+	if (buf->len <= 0)
+		handle_ssl_error(n, buf->len);
 }
 
-static int ssl_accept(int sfd) {
+static void ssl_write(int n) {
+	int r;
+	struct con *c = cons + n;
+
+	if (c->s || !c->other || !c->buf)
+		return;
+
+	r = SSL_write(c->other->s, c->buf->data, c->buf->len);
+	if (r > 0) {
+		free(c->buf);
+		c->buf = NULL;
+	} else {
+		handle_ssl_error(c->other - cons, r);
+	}
+}
+
+static int ssl_accept() {
 	struct con *c;
 	int fd;
 	BIO *bio;
 
-	if ((fd = accept(sfd, NULL, NULL)) < 0) {
+	if ((fd = accept(ev[0].fd, NULL, NULL)) < 0) {
 		return 0;
 	}
-	if (fd_count >= MAX_FDS) {
+	if (fd_count >= MAX_FDS || fcntl(fd, F_SETFL, (long) O_NONBLOCK)) {
 		close(fd);
 		return 0;
 	}
-
 	ev[fd_count].fd = fd;
 	ev[fd_count].events = 0;
 	c = cons + fd_count++;
