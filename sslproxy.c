@@ -136,11 +136,11 @@ static int ssl_accept(int sfd) {
 	BIO *bio;
 
 	if ((fd = accept(sfd, NULL, NULL)) < 0) {
-		return -1;
+		return 0;
 	}
 	if (fd_count >= MAX_FDS) {
 		close(fd);
-		return -1;
+		return 0;
 	}
 	expect(s = SSL_new(ctx));
 	SSL_set_accept_state(s);
@@ -149,7 +149,8 @@ static int ssl_accept(int sfd) {
 	SSL_set_bio(s, bio, bio);
 	ev[fd_count].fd = fd;
 	cons[fd_count].s = s;
-	return fd_count++;
+	++fd_count;
+	return 1;
 }
 
 int main() {
