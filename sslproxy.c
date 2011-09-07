@@ -208,7 +208,6 @@ static int ssl_accept() {
 	ERR_clear_error();
 	c->other = cons + fd_limit--;
 	c->other->other = c;
-	ev[fd_count].events = 0;
 	ssl_read(c);
 	return 1;
 }
