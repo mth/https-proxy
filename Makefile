@@ -1,5 +1,8 @@
+#CFLAGS=-O2
+CFLAGS=-g
+
 sslproxy: sslproxy.c
-	$(CC) -o $@ -Wall -Wno-parentheses -O2 $+ -lssl -lcrypto
+	$(CC) -o $@ -Wall -Wno-parentheses $(CFLAGS) $+ -lssl -lcrypto
 
 ssl_wrap: ssl_wrap.c
 	$(CC) -o $@ -W -O2 -pthread $+ -lgnutls

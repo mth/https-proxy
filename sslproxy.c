@@ -37,6 +37,7 @@ static int fd_count;
 static void rm_conn(int n) {
 	struct con *c = cons + n;
 
+	fprintf(stderr, "rm_conn(%d): close(%d)\n", n, ev[n].fd);
 	close(ev[n].fd);
 	SSL_free(c->s);
 	free(c->buf);
@@ -189,11 +190,11 @@ static int ssl_accept() {
 	ev[fd_count].fd = fd;
 	ev[fd_count].events = 0;
 	c = cons + fd_count++;
-	memset(c, 0, sizeof(struct con));
+	memset(c, 0, sizeof(struct con) * 2);
 	if (!(cons[fd_count].buf = malloc(sizeof(struct buf))) ||
 	    !(bio = BIO_new_socket(fd, 0)) ||
 	    !(c->s = SSL_new(ctx)) ||
-	    (ev[fd_count].fd = socket(PF_INET, SOCK_STREAM, IPPROTO_IP) < 0)) {
+	    (ev[fd_count].fd = socket(PF_INET, SOCK_STREAM, IPPROTO_IP)) < 0) {
 		fputs("SSL error\n", stderr);
 		free(cons[fd_count].buf);
 		BIO_free(bio);
@@ -205,6 +206,8 @@ static int ssl_accept() {
 	                     SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
 	SSL_set_bio(c->s, bio, bio);
 	ERR_clear_error();
+	c[1].other = c;
+	c->other = c + 1;
 	ev[fd_count++].events = 0;
 	ssl_read(c);
 	return 1;
@@ -276,9 +279,9 @@ static void after_poll() {
 		else if (!c->other)
 			rm_conn(i);
 	}
-	if ((ev[0].events & POLLIN))
+	if ((ev[0].revents & POLLIN))
 		ssl_accept();
-	ev[0].revents = fd_count < MAX_FDS ? POLLIN : 0;
+	ev[0].events = fd_count < MAX_FDS ? POLLIN : 0;
 }
 
 static void listen_sock(int port) {
