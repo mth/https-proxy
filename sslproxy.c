@@ -275,6 +275,9 @@ static void after_poll() {
 		else if (!c->other)
 			rm_conn(i);
 	}
+	if ((ev[0].events & POLLOUT))
+		ssl_accept();
+	ev[0].revents = fd_count < MAX_FDS ? POLLOUT : 0;
 }
 
 int main() {
