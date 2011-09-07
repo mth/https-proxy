@@ -203,6 +203,7 @@ static int ssl_accept() {
 	                     SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
 	SSL_set_bio(c->s, bio, bio);
 	ERR_clear_error();
+	ev[fd_count++].events = 0;
 	ssl_read(c);
 	return 1;
 }
