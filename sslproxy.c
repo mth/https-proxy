@@ -1,13 +1,14 @@
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <signal.h>
+#include <unistd.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
-#include <signal.h>
 #include <stdio.h>
 #include <poll.h>
 #include <alloca.h>
 
-#define MAX_FD 512
+#define MAX_FDS 512
 #define expect(v) if (!(v)) { fputs("** ERROR " #v "\n", stderr); exit(1); }
 
 void OPENSSL_cpuid_setup();
@@ -20,12 +21,29 @@ struct buf {
 
 struct con {
 	SSL *s;
-	struct buf *sbuf, *nbuf;
+	struct buf *buf;
+	struct con *other;
 };
 
 static SSL_CTX *ctx;
-struct pollfd ev[MAX_FD + 1];
-struct con cons[MAX_FD + 1];
+static struct pollfd ev[MAX_FDS];
+static struct con cons[MAX_FDS];
+static int fd_count;
+
+static void rm_conn(int n) {
+	struct con *c = cons + n;
+
+	close(ev[n].fd);
+	SSL_free(c->s);
+	free(c->buf);
+	if (c->other)
+		c->other->other = NULL;
+
+	ev[n] = ev[fd_count - 1];
+	*c = cons[--fd_count];
+	if (c->other)
+		c->other->other = c;
+}
 
 static int verify(X509_STORE_CTX *s, void *arg) {
 	unsigned len;
@@ -120,12 +138,18 @@ static int ssl_accept(int sfd) {
 	if ((fd = accept(sfd, NULL, NULL)) < 0) {
 		return 0;
 	}
+	if (fd_count >= MAX_FDS) {
+		close(fd);
+		return 0;
+	}
 	expect(s = SSL_new(ctx));
 	SSL_set_accept_state(s);
 	SSL_set_verify(s, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
-	expect(bio = BIO_new_socket(fd, 1));
+	expect(bio = BIO_new_socket(fd, 0));
 	SSL_set_bio(s, bio, bio);
-	cons[fd].s = s;
+	ev[fd_count].fd = fd;
+	cons[fd_count].s = s;
+	++fd_count;
 	return 1;
 }
 
