@@ -232,16 +232,13 @@ static int plain_read(int fd, struct con *c) {
 static int plain_write(int fd, struct buf *buf) {
 	int n = write(fd, buf->data + buf->start, buf->len);
 
-	if (n >= 0) {
-		buf->start += n;
-		buf->len -= n;
-		return 1;
+	if (n < 0) {
+		return errno == EINTR || errno == EAGAIN ||
+		       errno == EWOULDBLOCK;
 	}
-
-	if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
-		return 1;
-
-	return 0;
+	buf->start += n;
+	buf->len -= n;
+	return 1;
 }
 
 static void after_poll() {
