@@ -192,7 +192,7 @@ static int ssl_accept() {
 	ev[fd_count].fd = fd;
 	ev[fd_count].events = 0;
 	c = cons + fd_count++;
-	memset(c, 0, sizeof(struct con) * 2);
+	memset(c, 0, sizeof(struct con));
 	if (!(cons[fd_limit].buf = malloc(sizeof(struct buf))) ||
 	    !(c->s = SSL_new(ctx)) ||
 	    !(bio = BIO_new_socket(fd, 0))) {
@@ -208,6 +208,7 @@ static int ssl_accept() {
 	ERR_clear_error();
 	c->other = cons + fd_limit--;
 	c->other->other = c;
+	c->other->s = NULL;
 	ssl_read(c);
 	return 1;
 }
