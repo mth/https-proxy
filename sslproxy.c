@@ -1,5 +1,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <signal.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -191,7 +193,7 @@ static int ssl_accept() {
 	if (!(cons[fd_count].buf = malloc(sizeof(struct buf))) ||
 	    !(bio = BIO_new_socket(fd, 0)) ||
 	    !(c->s = SSL_new(ctx)) ||
-	    (ev[fd_count].fd = socket(AF_INET, SOCK_STREAM, 0) < 0)) {
+	    (ev[fd_count].fd = socket(PF_INET, SOCK_STREAM, IPPROTO_IP) < 0)) {
 		fputs("SSL error\n", stderr);
 		free(cons[fd_count].buf);
 		BIO_free(bio);
@@ -274,9 +276,28 @@ static void after_poll() {
 		else if (!c->other)
 			rm_conn(i);
 	}
-	if ((ev[0].events & POLLOUT))
+	if ((ev[0].events & POLLIN))
 		ssl_accept();
-	ev[0].revents = fd_count < MAX_FDS ? POLLOUT : 0;
+	ev[0].revents = fd_count < MAX_FDS ? POLLIN : 0;
+}
+
+static void listen_sock(int port) {
+	struct sockaddr_in sa;
+	int fd, v = 1;
+
+	expect((fd = socket(PF_INET, SOCK_STREAM, IPPROTO_IP)) >= 0);
+	setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &v, sizeof v);
+	memset(&sa, 0, sizeof sa);
+	sa.sin_family = AF_INET;
+	sa.sin_port = htons(port);
+	if (bind(fd, (struct sockaddr*) &sa, sizeof sa)) {
+		fprintf(stderr, "bind %d: %s\n", port, strerror(errno));
+		exit(1);
+	}
+	expect(!listen(fd, 64));
+	ev[0].fd = fd;
+	ev[0].events = POLLIN;
+	fd_count = 1;
 }
 
 int main() {
@@ -284,10 +305,11 @@ int main() {
 	if (!load_keycert("ssl.pem")) {
 		return 1;
 	}
+	listen_sock(4443);
 	for (;;) {
-		if (poll(ev, fd_count, 0) > 0)
+		if (poll(ev, fd_count, -1) > 0) {
 			after_poll();
-		else if (errno != EINTR) {
+		} else if (errno != EINTR) {
 			perror("poll");
 			break;
 		}
