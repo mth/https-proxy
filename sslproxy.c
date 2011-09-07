@@ -284,7 +284,14 @@ int main() {
 	if (!load_keycert("ssl.pem")) {
 		return 1;
 	}
-
+	for (;;) {
+		if (poll(ev, fd_count, 0) > 0)
+			after_poll();
+		else if (errno != EINTR) {
+			perror("poll");
+			break;
+		}
+	}
 	free_context();
 	return 0;
 }
