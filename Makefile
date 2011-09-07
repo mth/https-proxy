@@ -11,3 +11,5 @@ cert:
 	openssl req -newkey rsa:2048 -nodes -keyout ssl.pem -subj /CN=localhost\
 	| openssl x509 -req -signkey ssl.pem -sha256 -days 730 >> ssl.pem
 
+clean:
+	rm -f sslproxy

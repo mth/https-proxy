@@ -247,7 +247,7 @@ static int plain_write(int fd, struct buf *buf) {
 static void after_poll() {
 	int i;
 
-	for (i = fd_count; --i >= 0; ) {
+	for (i = fd_count; --i > 0; ) {
 		struct con *c = cons + i;
 
 		if (c->s) {
