@@ -141,6 +141,13 @@ static void handle_ssl_error(int n, int r) {
 	} else if (r == SSL_ERROR_WANT_WRITE) {
 		ev[n].events |= POLLOUT;
 	} else {
+		if (cons[n].other) {
+			int other = cons[n].other - cons;
+			if (cons[other].buf->len > 0)
+				shutdown(ev[other].fd, SHUT_RD);
+			else if (n < other)
+				rm_conn(other);
+		}
 		rm_conn(n);
 	}
 }
@@ -211,7 +218,7 @@ static int plain_read(int fd, struct con *c) {
 	if (!c || c->buf)
 		return 1;
 	if (!(c->buf = malloc(sizeof(c->buf)))) {
-		if (c->other)
+		if (c < c->other)
 			rm_conn(c->other - cons);
 		return 0;
 	}
