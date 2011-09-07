@@ -212,7 +212,7 @@ static int ssl_accept() {
 	return 1;
 }
 
-static int plain_read(int fd, struct con *c) {
+static int buf_read(int fd, struct con *c) {
 	int n;
 
 	if (!c || c->buf)
@@ -235,10 +235,12 @@ static int plain_read(int fd, struct con *c) {
 	return 1;
 }
 
-static int plain_write(int fd, struct buf *buf) {
-	int n = write(fd, buf->data + buf->start, buf->len);
+static int buf_write(int fd, struct buf *buf) {
+	int n;
 
-	if (n < 0) {
+	if (buf->len <= 0)
+		return 1;
+	if ((n = write(fd, buf->data + buf->start, buf->len)) < 0) {
 		return errno == EINTR || errno == EAGAIN ||
 		       errno == EWOULDBLOCK;
 	}
@@ -264,10 +266,8 @@ static void after_poll() {
 				ssl_read(c);
 			continue;
 		}
-		if ((ev[i].revents & POLLOUT) && c->buf->len > 0 &&
-		    		!plain_write(ev[i].fd, c->buf) ||
-		    (ev[i].revents & POLLIN) &&
-		    		!plain_read(ev[i].fd, c->other)) {
+		if ((ev[i].revents & POLLOUT) && !buf_write(ev[i].fd, c->buf) ||
+		    (ev[i].revents & POLLIN) && !buf_read(ev[i].fd, c->other)) {
 			rm_conn(i);
 			continue;
 		}
