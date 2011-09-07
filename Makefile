@@ -1,5 +1,5 @@
 sslproxy: sslproxy.c
-	$(CC) -o $@ -W -O2 $+ -lssl -lcrypto
+	$(CC) -o $@ -Wall -O2 $+ -lssl -lcrypto
 
 ssl_wrap: ssl_wrap.c
 	$(CC) -o $@ -W -O2 -pthread $+ -lgnutls

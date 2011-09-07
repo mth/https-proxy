@@ -1,3 +1,5 @@
+#include <sys/types.h>
+#include <sys/socket.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <signal.h>
@@ -7,6 +9,9 @@
 
 #define MAX_FD 512
 #define expect(v) if (!(v)) { fputs("** ERROR " #v "\n", stderr); exit(1); }
+
+void OPENSSL_cpuid_setup();
+void RAND_cleanup();
 
 struct buf {
 	int len;
@@ -107,15 +112,21 @@ static void free_context() {
 	CRYPTO_cleanup_all_ex_data();
 }
 
-int accept(int sfd) {
+static int ssl_accept(int sfd) {
 	int fd;
 	SSL *s;
+	BIO *bio;
 
 	if ((fd = accept(sfd, NULL, NULL)) < 0) {
 		return 0;
 	}
 	expect(s = SSL_new(ctx));
-
+	SSL_set_accept_state(s);
+	SSL_set_verify(s, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
+	expect(bio = BIO_new_socket(fd, 1));
+	SSL_set_bio(s, bio, bio);
+	cons[fd].s = s;
+	return 1;
 }
 
 int main() {
