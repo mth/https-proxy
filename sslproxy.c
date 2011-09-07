@@ -159,11 +159,18 @@ static void handle_ssl_error(int n, int r) {
 }
 
 static void ssl_read(struct con *c) {
+	int ofs, n;
 	struct buf *buf = c->other->buf;
-	buf->start = 0;
-	buf->len = SSL_read(c->s, buf->data, sizeof buf->data);
-	if (buf->len <= 0)
-		handle_ssl_error(c - cons, buf->len);
+
+	ofs = buf->start + buf->len;
+	if ((n = sizeof buf->data - 1 - ofs) < sizeof buf->data / 4)
+		return;
+	if ((n = SSL_read(c->s, buf->data + ofs, n)) <= 0) {
+		handle_ssl_error(c - cons, n);
+		return;
+	}
+	buf->len += n;
+	fprintf(stderr, "buf->len = %d\n", buf->len);
 }
 
 static int ssl_write(struct con *c) {
@@ -178,7 +185,7 @@ static int ssl_write(struct con *c) {
 }
 
 static int ssl_accept() {
-	struct con *c;
+	struct con *c, *co;
 	int fd;
 	BIO *bio = NULL;
 
@@ -206,9 +213,11 @@ static int ssl_accept() {
 	                     SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
 	SSL_set_bio(c->s, bio, bio);
 	ERR_clear_error();
-	c->other = cons + fd_limit--;
-	c->other->other = c;
-	c->other->s = NULL;
+	c->other = co = cons + fd_limit--;
+	co->other = c;
+	co->s = NULL;
+	co->buf->len = 0;
+	co->buf->start = 0;
 	ssl_read(c);
 	return 1;
 }
@@ -245,8 +254,10 @@ static int buf_write(int fd, struct buf *buf) {
 		return errno == EINTR || errno == EAGAIN ||
 		       errno == EWOULDBLOCK;
 	}
-	buf->start += n;
-	buf->len -= n;
+	if ((buf->len -= n) > 0)
+		buf->start += n;
+	else
+		buf->start = 0;
 	return 1;
 }
 
