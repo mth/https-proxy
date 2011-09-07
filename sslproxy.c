@@ -17,6 +17,7 @@ void RAND_cleanup();
 
 struct buf {
 	int len;
+	int start;
 	char data[16384];
 };
 
@@ -144,28 +145,33 @@ static void handle_ssl_error(int n, int r) {
 	}
 }
 
-static void ssl_read(int n) {
-	struct buf *buf = cons[n].buf;
+static int ssl_read(struct con *c) {
+	struct buf *buf;
 
-	buf->len = SSL_read(cons[n].s, buf->data, sizeof buf->data);
+	if (c->other) {
+		buf = c->other->buf;
+	} else if (c->buf && c->buf->len < 0) {
+		buf = c->buf;
+	} else {
+		return 1;
+	}
+
+	buf->start = 0;
+	buf->len = SSL_read(c->s, buf->data, sizeof buf->data);
 	if (buf->len <= 0)
-		handle_ssl_error(n, buf->len);
+		handle_ssl_error(c - cons, buf->len);
+	return buf->len;
 }
 
-static void ssl_write(int n) {
-	int r;
-	struct con *c = cons + n;
-
-	if (c->s || !c->other || !c->buf)
-		return;
-
-	r = SSL_write(c->other->s, c->buf->data, c->buf->len);
+static int ssl_write(struct con *c) {
+	int r = SSL_write(c->s, c->buf->data, c->buf->len);
 	if (r > 0) {
 		free(c->buf);
 		c->buf = NULL;
 	} else {
-		handle_ssl_error(c->other - cons, r);
+		handle_ssl_error(c - cons, r);
 	}
+	return r;
 }
 
 static int ssl_accept() {
@@ -196,8 +202,68 @@ static int ssl_accept() {
 	                     SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
 	SSL_set_bio(c->s, bio, bio);
 	ERR_clear_error();
-	ssl_read(fd_count - 1);
+	ssl_read(fd_count - 1 + cons);
 	return 1;
+}
+
+static int plain_read(int fd, struct con *c) {
+	int n;
+
+	if (!c || c->buf)
+		return 1;
+	if (!(c->buf = malloc(sizeof(c->buf)))) {
+		if (c->other)
+			rm_conn(c->other - cons);
+		return 0;
+	}
+	n = read(fd, c->buf->data, sizeof c->buf->data);
+	if (n < 0 && (errno == EINTR || errno == EAGAIN ||
+		      errno == EWOULDBLOCK)) {
+		free(c->buf);
+		c->buf = NULL;
+	} else if (n <= 0) {
+		return 0;
+	} else {
+		c->buf->len = n;
+	}
+	return 1;
+}
+
+static int plain_write(int fd, struct buf *buf) {
+	int n = write(fd, buf->data + buf->start, buf->len);
+
+	if (n >= 0) {
+		buf->start += n;
+		buf->len -= n;
+		return 1;
+	}
+
+	if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
+		return 1;
+
+	return 0;
+}
+
+static void after_poll() {
+	int i;
+
+	for (i = fd_count; --i >= 0; ) {
+		struct con *c = cons + i;
+
+		if (c->s) {
+			if ((ev[i].revents & (POLLIN | POLLOUT)) &&
+			    ((c->buf && c->buf->len > 0 && ssl_write(c) <= 0 ||
+			     ssl_read(c) <= 0)))
+			    continue;
+		} else if ((ev[i].revents & POLLHUP) ||
+			   (ev[i].revents & POLLOUT) && c->buf->len > 0 &&
+		           	!plain_write(ev[i].fd, c->buf) ||
+		           (ev[i].revents & POLLIN) &&
+		           	!plain_read(ev[i].fd, c->other)) {
+			rm_conn(i);
+			continue;
+		}
+	}
 }
 
 int main() {
