@@ -175,12 +175,12 @@ static int ssl_write(struct con *c) {
 static int ssl_accept() {
 	struct con *c;
 	int fd;
-	BIO *bio;
+	BIO *bio = NULL;
 
 	if ((fd = accept(ev[0].fd, NULL, NULL)) < 0) {
 		return 0;
 	}
-	if (fd_count >= MAX_FDS || fcntl(fd, F_SETFL, (long) O_NONBLOCK)) {
+	if (fd_count + 1 >= MAX_FDS || fcntl(fd, F_SETFL, (long) O_NONBLOCK)) {
 		close(fd);
 		return 0;
 	}
@@ -188,9 +188,13 @@ static int ssl_accept() {
 	ev[fd_count].events = 0;
 	c = cons + fd_count++;
 	memset(c, 0, sizeof(struct con));
-	if (!(bio = BIO_new_socket(fd, 0)) ||
-	    !(c->s = SSL_new(ctx))) {
+	if (!(cons[fd_count].buf = malloc(sizeof(struct buf))) ||
+	    !(bio = BIO_new_socket(fd, 0)) ||
+	    !(c->s = SSL_new(ctx)) ||
+	    (ev[fd_count].fd = socket(AF_INET, SOCK_STREAM, 0) < 0)) {
 		fputs("SSL error\n", stderr);
+		free(cons[fd_count].buf);
+		BIO_free(bio);
 		rm_conn(fd_count - 1);
 		return 0;
 	}
