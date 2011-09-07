@@ -261,6 +261,10 @@ static void after_poll() {
 			rm_conn(i);
 			continue;
 		}
+		if (c->buf->len >= 0)
+			ev[i].events |= POLLOUT;
+		if (c->other && !c->other->buf)
+			ev[i].events |= POLLIN;
 	}
 }
 
