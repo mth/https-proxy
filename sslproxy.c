@@ -39,10 +39,12 @@ static void rm_conn(int n) {
 	if (c->other)
 		c->other->other = NULL;
 
-	ev[n] = ev[fd_count - 1];
-	*c = cons[--fd_count];
-	if (c->other)
-		c->other->other = c;
+	if (n < --fd_count) {
+		ev[n] = ev[fd_count];
+		*c = cons[fd_count];
+		if (c->other)
+			c->other->other = c;
+	}
 }
 
 static int verify(X509_STORE_CTX *s, void *arg) {
@@ -130,9 +132,17 @@ static void free_context() {
 	CRYPTO_cleanup_all_ex_data();
 }
 
+static int ssl_read(int n) {
+	struct buf *buf = cons[n].buf;
+
+	buf->len = SSL_read(cons[n].s, buf->data, sizeof buf->data);
+	if (buf->len > 0)
+		return 1;
+}
+
 static int ssl_accept(int sfd) {
+	struct con *c;
 	int fd;
-	SSL *s;
 	BIO *bio;
 
 	if ((fd = accept(sfd, NULL, NULL)) < 0) {
@@ -142,14 +152,24 @@ static int ssl_accept(int sfd) {
 		close(fd);
 		return 0;
 	}
-	expect(s = SSL_new(ctx));
-	SSL_set_accept_state(s);
-	SSL_set_verify(s, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
-	expect(bio = BIO_new_socket(fd, 0));
-	SSL_set_bio(s, bio, bio);
+
 	ev[fd_count].fd = fd;
-	cons[fd_count].s = s;
-	++fd_count;
+	ev[fd_count].events = 0;
+	c = cons + fd_count++;
+	memset(c, 0, sizeof(struct con));
+	if (!(c->buf = malloc(sizeof(struct buf))) ||
+	    !(bio = BIO_new_socket(fd, 0)) ||
+	    !(c->s = SSL_new(ctx))) {
+		fputs("SSL error\n", stderr);
+		rm_conn(fd_count - 1);
+		return 0;
+	}
+	SSL_set_accept_state(c->s);
+	SSL_set_verify(c->s, SSL_VERIFY_PEER |
+	                     SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
+	SSL_set_bio(c->s, bio, bio);
+	ERR_clear_error();
+	ssl_read(fd_count - 1);
 	return 1;
 }
 
