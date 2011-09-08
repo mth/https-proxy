@@ -399,8 +399,6 @@ static int ssl_accept() {
 	if ((fd = accept(ev[0].fd, NULL, NULL)) < 0 ||
 			!prepare_sock(fd, fd_count + 2 < fd_limit))
 		return 0;
-	setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &opt, sizeof opt);
-	setsockopt(fd, SOL_SOCKET, SO_OOBINLINE, &opt, sizeof opt);
 	ev[fd_count].fd = fd;
 	ev[fd_count].events = 0;
 	c = cons + fd_count++;
