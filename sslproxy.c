@@ -452,7 +452,6 @@ static int buf_write(int fd, buf buf, con other) {
 
 	if (buf->len <= 0)
 		return 1;
-	// TODO check socket errors from connect
 	if ((n = write(fd, buf->data + buf->start, buf->len)) < 0)
 		return errno == EINTR || errno == EAGAIN;
 	if ((buf->len -= n) > 0) {
@@ -474,6 +473,8 @@ static void after_poll() {
 
 		if ((ev[i].revents & (POLLHUP | POLLERR))) {
 			rm_conn(i);
+			// TODO check socket errors from connect
+			// TODO do nice SSL shutdown?
 			continue;
 		}
 		ev[i].events = POLLHUP | POLLERR;
