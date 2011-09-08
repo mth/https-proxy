@@ -2,6 +2,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <netdb.h>
 #include <signal.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -31,7 +32,7 @@ typedef struct con {
 } *con;
 
 typedef struct host {
-	struct sockaddr *addr;
+	struct addrinfo *ai;
 	struct host *next;
 	char name[1];
 } *host;
@@ -92,11 +93,12 @@ static int verify(X509_STORE_CTX *s, void *arg) {
 		if (!memcmp(i->value, md, sizeof md)) {
 			while (i && !i->hosts)
 				i = i->next;
-			if (i && !SSL_set_ex_data(ssl, host_idx, i->hosts)) {
-				s->error = X509_V_ERR_APPLICATION_VERIFICATION;
-				return 0;
-			}
-			return 1;
+			if (!i)
+				break;
+			if (SSL_set_ex_data(ssl, host_idx, i->hosts))
+				return 1;
+			s->error = X509_V_ERR_APPLICATION_VERIFICATION;
+			return 0;
 		}
 	}
 	s->error = X509_V_ERR_CERT_REJECTED;
@@ -198,6 +200,42 @@ static int add_digest(int len, char *dig) {
 	return 1;
 }
 
+static int add_host(char *name) {
+	char *node, *service;
+	struct addrinfo hints, *r = NULL;
+	int res;
+	host h;
+
+	if ((node = strpbrk(name, " \t")))
+		*(node++) = 0;
+	else
+		node = name;
+
+	expect(h = malloc(sizeof(struct host) + strlen(name)));
+	strcpy(h->name, name);
+
+	if ((service = strchr(node, ':')))
+		*(service++) = 0;
+	if (!service || node == name)
+		service = "80";
+	node += strspn(node, " \t");
+
+	memset(&hints, 0, sizeof hints);
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_flags = AI_ADDRCONFIG;
+	if ((res = getaddrinfo(node, service, &hints, &r)) || !r) {
+		fprintf(stderr, "Cannot resolve %s:%s: %s\n",
+		        node, service, gai_strerror(res));
+		free(h);
+		return 0;
+	}
+	h->ai = r;
+	h->next = digests->hosts;
+	digests->hosts = h;
+	return 1;
+}
+
 static int load_conf(const char *fn) {
 	char what[10];
 	char buf[256];
@@ -223,6 +261,11 @@ static int load_conf(const char *fn) {
 			else if (!load_keycert(buf))
 				return 0;
 			cert_loaded = 1;
+		} else if (!strcmp(what, "allow")) {
+			if (!digests)
+				fprintf(stderr, "%s: allow must follow hash\n", fn);
+			else if (!add_host(buf))
+				fprintf(stderr, "%s: invalid allow directive: %s\n", fn, buf);
 		} else if (!strcmp(what, "port")) {
 			if (!sscanf(buf, "%d", &server_port))
 				fprintf(stderr, "%s: invalid server port %s\n", fn, buf);
