@@ -302,9 +302,9 @@ static int forward(con c, struct addrinfo *ai) {
 
 static int ssl_read(con c, int pf) {
 	int ofs, n;
+	buf buf = c->other->buf;
 	char *p, *e;
 	host h;
-	buf buf = c->other->buf;
 
 	ofs = buf->start + buf->len;
 	if ((n = sizeof buf->data - 1 - ofs) < sizeof buf->data / 4) {
