@@ -397,8 +397,9 @@ static void after_poll() {
 				!buf_read(ev[i].fd, c->other)) {
 			rm_conn(i);
 			continue;
-		} else if (c->other && !c->other->buf)
+		} else if (c->other && !c->other->buf) {
 			ev[i].events |= POLLIN;
+		}
 		if (c->buf && c->buf->len >= 0)
 			ev[i].events |= POLLOUT;
 		else if (!c->other)
@@ -430,9 +431,8 @@ static void listen_sock(int port) {
 
 int main() {
 	init_context();
-	if (!load_conf("https.conf")) {
+	if (!load_conf("https.conf"))
 		return 1;
-	}
 	listen_sock(server_port);
 	for (;;) {
 		if (poll(ev, fd_count, -1) > 0) {
