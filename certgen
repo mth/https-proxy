@@ -16,7 +16,7 @@ if [ "$2" = "" ]; then
 certgen [-no-dh] host-name server.pem
 certgen -client common-name client.p12
 
-For example: ./certgen localhost ssl.pem
+For example: ./certgen '*.localnet' ssl.pem
 
 HELP
 	exit 1
