@@ -89,6 +89,8 @@ static void init_context() {
 
 	expect(ctx = SSL_CTX_new(TLSv1_server_method()));
 	SSL_CTX_set_cert_verify_callback(ctx, verify, NULL);
+	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_CLIENT_ONCE |
+	                   SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
 	SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_CLIENT);
 }
 
@@ -217,7 +219,7 @@ static int ssl_write(struct con *c) {
 
 static int ssl_accept() {
 	struct con *c, *co;
-	int fd;
+	int fd, opt = 1;
 	BIO *bio = NULL;
 
 	if ((fd = accept(ev[0].fd, NULL, NULL)) < 0) {
@@ -227,6 +229,8 @@ static int ssl_accept() {
 		close(fd);
 		return 0;
 	}
+	setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &opt, sizeof opt);
+	setsockopt(fd, SOL_SOCKET, SO_OOBINLINE, &opt, sizeof opt);
 	ev[fd_count].fd = fd;
 	ev[fd_count].events = 0;
 	c = cons + fd_count++;
@@ -242,8 +246,6 @@ static int ssl_accept() {
 		return 0;
 	}
 	SSL_set_accept_state(c->s);
-	SSL_set_verify(c->s, SSL_VERIFY_PEER |
-	                     SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
 	SSL_set_bio(c->s, bio, bio);
 	ERR_clear_error();
 	co->buf->len = 0;
@@ -263,8 +265,7 @@ static int buf_read(int fd, struct con *c) {
 		return 0;
 	}
 	n = read(fd, c->buf->data, sizeof c->buf->data);
-	if (n < 0 && (errno == EINTR || errno == EAGAIN ||
-		      errno == EWOULDBLOCK)) {
+	if (n < 0 && (errno == EINTR || errno == EAGAIN)) {
 		free(c->buf);
 		c->buf = NULL;
 	} else if (n <= 0) {
@@ -281,10 +282,8 @@ static int buf_write(int fd, struct buf *buf, struct con *other) {
 
 	if (buf->len <= 0)
 		return 1;
-	if ((n = write(fd, buf->data + buf->start, buf->len)) < 0) {
-		return errno == EINTR || errno == EAGAIN ||
-		       errno == EWOULDBLOCK;
-	}
+	if ((n = write(fd, buf->data + buf->start, buf->len)) < 0)
+		return errno == EINTR || errno == EAGAIN;
 	if ((buf->len -= n) > 0) {
 		buf->start += n;
 	} else {
