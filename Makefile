@@ -16,3 +16,6 @@ cert:
 
 clean:
 	rm -f sslproxy
+
+p12:
+	openssl pkcs12 -export -in client.pem -inkey client.pem -certfile client.pem -name "Lohesert" -out lohesert.p12
