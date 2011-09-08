@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <poll.h>
 #include <ctype.h>
+#include <assert.h>
 
 #define MAX_FDS 512
 #define expect(v) if (!(v)) { fputs("** ERROR " #v "\n", stderr); exit(1); }
@@ -330,10 +331,15 @@ static void handle_ssl_error(int n, int r) {
 	} else {
 		if (cons[n].other) {
 			int other = cons[n].other - cons;
-			if (other < fd_count && cons[other].buf->len > 0)
+			if (other < fd_count && cons[other].buf->len > 0) {
 				shutdown(ev[other].fd, SHUT_RD);
-			else if (n < other)
+			} else if (n < other) {
+				assert(cons[other].other);
+				if (cons[other].other != cons + n)
+					fprintf(stderr, "%d != %d\n", cons[other].other - cons, n);
+				assert(cons[other].other == cons + n);
 				rm_conn(other);
+			}
 		}
 		rm_conn(n);
 	}
