@@ -12,10 +12,11 @@ esac
 
 if [ "$2" = "" ]; then
 	cat <<HELP
-certgen [-no-dh] host-name server.pem"
-certgen -client common-name client.p12"
 
-For example: ./certgen localhost ssl.pem"
+certgen [-no-dh] host-name server.pem
+certgen -client common-name client.p12
+
+For example: ./certgen localhost ssl.pem
 
 HELP
 	exit 1
