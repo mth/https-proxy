@@ -510,9 +510,29 @@ static void listen_sock(int port) {
 	fd_count = 1;
 }
 
-int main() {
+static int help() {
+	puts("\nhttps-proxy [options]\n\n"
+	     "\t-c config  Configuration file to use\n"
+	     "\t-h         Print this help\n"
+	     "\t-t         Allow only TLSv1 (no SSL)\n");
+	return 0;
+}
+
+int main(int argc, char **argv) {
+	int i;
+	const char *cfg = "/etc/https/proxy.conf";;
+
+	for (i = 1; i < argc; ++i) {
+		if (!strcmp(argv[i], "-c") && ++i < argc)
+			cfg = argv[i];
+		else if (!strcmp(argv[i], "-t"))
+			tls_only = 1;
+		else if (!strcmp(argv[i], "-h"))
+			return help();
+	}
+
 	init_context();
-	if (!load_conf("https.conf"))
+	if (!load_conf(cfg))
 		return 1;
 	listen_sock(server_port);
 	for (;;) {
