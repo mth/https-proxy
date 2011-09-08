@@ -33,18 +33,23 @@ static SSL_CTX *ctx;
 static struct pollfd ev[MAX_FDS];
 static struct con cons[MAX_FDS];
 static int fd_count;
-static int fd_limit = MAX_FDS - 1;
+static int fd_limit = MAX_FDS;
 
 static void rm_conn(int n) {
 	struct con *c = cons + n;
 
-	fprintf(stderr, "rm_conn(%d): close(%d)\n", n, ev[n].fd);
+	//fprintf(stderr, "rm_conn(%d): close(%d)\n", n, ev[n].fd);
 	SSL_free(c->s);
 	free(c->buf);
-	if (c->other)
+	if (c->other) {
 		c->other->other = NULL;
-	if (n >= fd_count)
+		if (c->other - cons >= fd_count) 
+			rm_conn(c->other - cons);
+	}
+	if (n >= fd_count) {
+		cons[n] = cons[fd_limit++];
 		return;
+	}
 	close(ev[n].fd);
 	if (n < --fd_count) {
 		ev[n] = ev[fd_count];
@@ -164,8 +169,11 @@ static int ssl_read(struct con *c, int pf) {
 	struct buf *buf = c->other->buf;
 
 	ofs = buf->start + buf->len;
-	if ((n = sizeof buf->data - 1 - ofs) < sizeof buf->data / 4)
+	if ((n = sizeof buf->data - 1 - ofs) < sizeof buf->data / 4) {
+		if (c->other - cons >= fd_count)
+			goto close;
 		return 1;
+	}
 	if (!(pf & (POLLIN | POLLOUT))) {
 		ev[c - cons].events |= POLLIN;
 		return 1;
@@ -183,12 +191,15 @@ static int ssl_read(struct con *c, int pf) {
 	p[buf->len] = 0;
 	while ((p = strstr(p, "\r\n")) && strncasecmp(p += 2, "host:", 5))
 		if (*p == '\r')
-			return 1;
+			goto close;
 	if (!p || !*(p += 5, p += strspn(p, " ")) || !(e = strchr(p, '\r')))
 		return 1;
 	*e = 0;
 	fprintf(stderr, "HOST=[%s]\n", p);
 	return 1;
+close:
+	rm_conn(c - cons);
+	return 0;
 }
 
 static int ssl_write(struct con *c) {
@@ -212,7 +223,7 @@ static int ssl_accept() {
 	if ((fd = accept(ev[0].fd, NULL, NULL)) < 0) {
 		return 0;
 	}
-	if (fd_count + 1 >= fd_limit || fcntl(fd, F_SETFL, (long) O_NONBLOCK)) {
+	if (fd_count + 2 >= fd_limit || fcntl(fd, F_SETFL, (long) O_NONBLOCK)) {
 		close(fd);
 		return 0;
 	}
@@ -220,11 +231,13 @@ static int ssl_accept() {
 	ev[fd_count].events = 0;
 	c = cons + fd_count++;
 	memset(c, 0, sizeof(struct con));
-	if (!(cons[fd_limit].buf = malloc(sizeof(struct buf))) ||
+	c->other = co = cons + --fd_limit;
+	co->other = c;
+	co->s = NULL;
+	if (!(co->buf = malloc(sizeof(struct buf))) ||
 	    !(c->s = SSL_new(ctx)) ||
 	    !(bio = BIO_new_socket(fd, 0))) {
 		fputs("SSL error\n", stderr);
-		free(cons[fd_limit].buf);
 		rm_conn(fd_count - 1);
 		return 0;
 	}
@@ -233,9 +246,6 @@ static int ssl_accept() {
 	                     SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
 	SSL_set_bio(c->s, bio, bio);
 	ERR_clear_error();
-	c->other = co = cons + fd_limit--;
-	co->other = c;
-	co->s = NULL;
 	co->buf->len = 0;
 	co->buf->start = 0;
 	ssl_read(c, POLLIN);
