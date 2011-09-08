@@ -197,12 +197,18 @@ static int load_conf(const char *fn) {
 		while (--n >= 0 && buf[n] > 0 && buf[n] <= ' ')
 			buf[n] = 0;
 		if (!strcmp(what, "sha256")) {
-			add_digest(buf);
+			add_digest(n, buf);
 		} else if (!strcmp(what, "cert")) {
-
+			if (cert_loaded)
+				fprintf(stderr, "Duplicate cert entry in %s\n", fn);
+			else if (!load_keycert(buf))
+				return 0;
+			cert_loaded = 1;
+		} else if (*buf != '#') {
+			fprintf(stderr, "Garbage definition %s in %s\n", what, fn);
 		}
 	}
-	return 1;
+	return cert_loaded || load_keycert("ssl.pem");
 }
 
 static void handle_ssl_error(int n, int r) {
@@ -415,9 +421,6 @@ static void listen_sock(int port) {
 int main() {
 	init_context();
 	if (!load_conf("https.conf")) {
-		return 1;
-	}
-	if (!load_keycert("ssl.pem")) {
 		return 1;
 	}
 	listen_sock(4443);
