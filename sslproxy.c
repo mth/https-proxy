@@ -271,7 +271,7 @@ static int buf_read(int fd, struct con *c) {
 		return 0;
 	} else {
 		c->buf->len = n;
-		ev[c - cons].events |= POLLOUT;
+		ssl_write(c);
 	}
 	return 1;
 }
