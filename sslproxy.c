@@ -242,11 +242,12 @@ static int buf_read(int fd, struct con *c) {
 		return 0;
 	} else {
 		c->buf->len = n;
+		ev[c - cons].events |= POLLOUT;
 	}
 	return 1;
 }
 
-static int buf_write(int fd, struct buf *buf) {
+static int buf_write(int fd, struct buf *buf, struct con *other) {
 	int n;
 
 	if (buf->len <= 0)
@@ -255,10 +256,14 @@ static int buf_write(int fd, struct buf *buf) {
 		return errno == EINTR || errno == EAGAIN ||
 		       errno == EWOULDBLOCK;
 	}
-	if ((buf->len -= n) > 0)
+	if ((buf->len -= n) > 0) {
 		buf->start += n;
-	else
+	} else {
 		buf->start = 0;
+		if (other)
+			ev[other - cons].events |= POLLIN;
+	}
+		
 	return 1;
 }
 
@@ -284,7 +289,7 @@ static void after_poll() {
 					ev[i].events |= POLLIN;
 			}
 		} else if ((ev[i].revents & POLLOUT) &&
-				!buf_write(ev[i].fd, c->buf) ||
+				!buf_write(ev[i].fd, c->buf, c->other) ||
 		           (ev[i].revents & POLLIN) &&
 				!buf_read(ev[i].fd, c->other)) {
 			rm_conn(i);
