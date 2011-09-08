@@ -55,7 +55,7 @@ static digest digests;
 static void rm_conn(int n) {
 	con c = cons + n;
 
-	//fprintf(stderr, "rm_conn(%d): close(%d)\n", n, ev[n].fd);
+	fprintf(stderr, "rm_conn(%d): close(%d)\n", n, ev[n].fd);
 	SSL_free(c->s);
 	free(c->buf);
 	if (c->other) {
@@ -108,6 +108,7 @@ static int verify(X509_STORE_CTX *s, void *arg) {
 static void init_context() {
 	SSL_library_init();
 	ERR_load_crypto_strings();
+	SSL_load_error_strings();
 	OPENSSL_cpuid_setup();
 	EVP_add_cipher(EVP_aes_128_cbc());
 	EVP_add_cipher(EVP_aes_192_cbc());
@@ -276,6 +277,45 @@ static int load_conf(const char *fn) {
 	return cert_loaded || load_keycert("ssl.pem");
 }
 
+static int prepare_sock(int fd, int opt) {
+	if (!opt || fcntl(fd, F_SETFL, (long) O_NONBLOCK)) {
+		close(fd);
+		return 0;
+	}
+	setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &opt, sizeof opt);
+	setsockopt(fd, SOL_SOCKET, SO_OOBINLINE, &opt, sizeof opt);
+	return 1;
+}
+
+static int forward(con c, host h) {
+	con cp;
+	int fd = -1;
+
+	fprintf(stderr, "host matched\n");
+	if (fd_count >= fd_limit ||
+	    (fd = socket(h->ai->ai_family, h->ai->ai_socktype, h->ai->ai_protocol))
+			< 0 || !prepare_sock(fd, 1))
+		goto close;
+
+	if (connect(fd, h->ai->ai_addr, h->ai->ai_addrlen) &&
+			errno != EINPROGRESS) {
+		close(fd);
+close:	rm_conn(c - cons);
+		return 0;
+	}
+
+	ev[fd_count].fd = fd;
+	ev[fd_count].events = POLLOUT;
+	cons[fd_count] = *(cp = c->other);
+	c->other = cons + fd_count++;
+	if (cp > cons + fd_limit) {
+		*cp = cons[fd_limit];
+		cp->other = cp;
+	}
+	++fd_limit;
+	return 1;
+}
+
 static void handle_ssl_error(int n, int r) {
 	r = SSL_get_error(cons[n].s, r);
 	if (r == SSL_ERROR_WANT_READ) {
@@ -283,6 +323,8 @@ static void handle_ssl_error(int n, int r) {
 	} else if (r == SSL_ERROR_WANT_WRITE) {
 		ev[n].events |= POLLOUT;
 	} else {
+		fprintf(stderr, "err=%d\n", r);
+		ERR_print_errors_fp(stderr);
 		if (cons[n].other) {
 			int other = cons[n].other - cons;
 			if (other < fd_count && cons[other].buf->len > 0)
@@ -293,12 +335,6 @@ static void handle_ssl_error(int n, int r) {
 		rm_conn(n);
 	}
 	ERR_clear_error();
-}
-
-static int forward(con c, host h) {
-	fprintf(stderr, "host matched\n");
-	SSL_set_ex_data(c->s, host_idx, h);
-	return 1;
 }
 
 static int ssl_read(con c, int pf) {
@@ -346,7 +382,11 @@ close:
 }
 
 static int ssl_write(con c) {
-	int r = SSL_write(c->s, c->buf->data, c->buf->len);
+	int r;
+	ERR_clear_error();
+	fprintf(stderr, "SSL_write(%p, %d %s)\n", c->buf->data,
+		c->buf->len, c->buf->data);
+	r = SSL_write(c->s, c->buf->data, c->buf->len);
 	if (r > 0) {
 		free(c->buf);
 		c->buf = NULL;
@@ -363,13 +403,9 @@ static int ssl_accept() {
 	int fd, opt = 1;
 	BIO *bio = NULL;
 
-	if ((fd = accept(ev[0].fd, NULL, NULL)) < 0) {
+	if ((fd = accept(ev[0].fd, NULL, NULL)) < 0 ||
+			!prepare_sock(fd, fd_count + 2 < fd_limit))
 		return 0;
-	}
-	if (fd_count + 2 >= fd_limit || fcntl(fd, F_SETFL, (long) O_NONBLOCK)) {
-		close(fd);
-		return 0;
-	}
 	setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &opt, sizeof opt);
 	setsockopt(fd, SOL_SOCKET, SO_OOBINLINE, &opt, sizeof opt);
 	ev[fd_count].fd = fd;
