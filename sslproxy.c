@@ -66,6 +66,7 @@ static void rm_conn(con c) {
 		(cons[n] = cons[fd_count])->idx = n;
 	}
 	free(c);
+	cons[fd_count] = NULL;
 }
 
 static int verify(X509_STORE_CTX *s, void *arg) {
@@ -382,7 +383,7 @@ static int ssl_write(con c) {
 }
 
 static inline con new_con() {
-	con c = malloc(sizeof(con));
+	con c = malloc(sizeof(struct con));
 	if (c)
 		memset(c, 0, sizeof(struct con) - sizeof c->data);
 	return c;
