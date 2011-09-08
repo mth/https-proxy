@@ -9,11 +9,11 @@
 #include <openssl/err.h>
 #include <stdio.h>
 #include <poll.h>
-#include <alloca.h>
 #include <ctype.h>
 
 #define MAX_FDS 512
 #define expect(v) if (!(v)) { fputs("** ERROR " #v "\n", stderr); exit(1); }
+#define SHA256_LEN 32
 
 void OPENSSL_cpuid_setup();
 void RAND_cleanup();
@@ -39,7 +39,7 @@ typedef struct host {
 typedef struct digest {
 	host hosts;
 	struct digest *next;
-	char value[32];
+	char value[SHA256_LEN];
 } *digest;
 
 static SSL_CTX *ctx;
@@ -47,6 +47,7 @@ static struct pollfd ev[MAX_FDS];
 static struct con cons[MAX_FDS];
 static int fd_count;
 static int fd_limit = MAX_FDS;
+static int server_port = 443;
 static digest digests;
 
 static void rm_conn(int n) {
@@ -74,19 +75,22 @@ static void rm_conn(int n) {
 }
 
 static int verify(X509_STORE_CTX *s, void *arg) {
-	unsigned len;
-	unsigned char *md;
+	digest i;
+	unsigned char md[SHA256_LEN];
+	unsigned len = sizeof md;
 	const EVP_MD *alg = EVP_sha256();
 
-	if (!(len = EVP_MD_size(alg)) || !(md = alloca(len)) ||
-	    !X509_digest(s->cert, alg, md, &len)) {
+	if (EVP_MD_size(alg) != len || !X509_digest(s->cert, alg, md, &len)) {
 		s->error = X509_V_ERR_APPLICATION_VERIFICATION;
 		return 0;
 	}
-	//s->error = X509_V_ERR_CERT_REJECTED;
-	//return 0;
-	fputs("Verify done\n", stderr);
-	return 1;
+	ERR_clear_error();
+	for (i = digests; i; i = i->next) {
+		if (!memcmp(i->value, md, sizeof md))
+			return 1;
+	}
+	s->error = X509_V_ERR_CERT_REJECTED;
+	return 0;
 }
 
 static void init_context() {
@@ -204,7 +208,10 @@ static int load_conf(const char *fn) {
 			else if (!load_keycert(buf))
 				return 0;
 			cert_loaded = 1;
-		} else if (*buf != '#') {
+		} else if (!strcmp(what, "port")) {
+			if (!sscanf(buf, "%d", &server_port))
+				fprintf(stderr, "Invalid server port %s in %s\n", buf, fn);
+		} else if (*what != '#') {
 			fprintf(stderr, "Garbage definition %s in %s\n", what, fn);
 		}
 	}
@@ -423,7 +430,7 @@ int main() {
 	if (!load_conf("https.conf")) {
 		return 1;
 	}
-	listen_sock(4443);
+	listen_sock(server_port);
 	for (;;) {
 		if (poll(ev, fd_count, -1) > 0) {
 			after_poll();
