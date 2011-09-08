@@ -1,5 +1,5 @@
-CFLAGS=-O2
-#CFLAGS=-g
+#CFLAGS=-O2
+CFLAGS=-g -O
 
 sslproxy: sslproxy.c
 	$(CC) -o $@ -Wall -Wno-parentheses $(CFLAGS) $+ -lssl -lcrypto
