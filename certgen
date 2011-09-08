@@ -29,7 +29,7 @@ PNAME="$2"
 openssl req -newkey rsa:2048 -nodes -keyout "$PNAME" -subj "/CN=$1"\
 | openssl x509 -req -signkey "$PNAME" -sha256 -days 730 >> "$PNAME"
 
-[ "$MODE" != "server" ] || openssl dhparam 2048 >> ssl.pem
+[ "$MODE" != "server" ] || openssl dhparam 2048 >> "$PNAME"
 
 if [ "$MODE" = "-client" ]; then
 	openssl pkcs12 -export -in "$PNAME" -inkey "$PNAME"\
