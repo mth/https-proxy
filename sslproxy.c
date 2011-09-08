@@ -393,7 +393,7 @@ static int ssl_write(con c) {
 
 static int ssl_accept() {
 	con c, co;
-	int fd, opt = 1;
+	int fd;
 	BIO *bio = NULL;
 
 	if ((fd = accept(ev[0].fd, NULL, NULL)) < 0 ||
