@@ -295,9 +295,15 @@ static void handle_ssl_error(int n, int r) {
 	ERR_clear_error();
 }
 
+static int forward(con c, struct addrinfo *ai) {
+	fprintf(stderr, "host matched\n");
+	return 1;
+}
+
 static int ssl_read(con c, int pf) {
 	int ofs, n;
 	char *p, *e;
+	host h;
 	buf buf = c->other->buf;
 
 	ofs = buf->start + buf->len;
@@ -327,8 +333,12 @@ static int ssl_read(con c, int pf) {
 	if (!p || !*(p += 5, p += strspn(p, " ")) || !(e = strchr(p, '\r')))
 		return 1;
 	*e = 0;
-	fprintf(stderr, "HOST=[%s]\n", p);
-	return 1;
+	for (h = SSL_get_ex_data(c->s, host_idx); h; h = h->next) {
+		if (!strcmp(h->name, p)) {
+			*e = '\r';
+			return forward(c, h->ai);
+		}
+	}
 close:
 	rm_conn(c - cons);
 	return 0;
