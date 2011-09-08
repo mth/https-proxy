@@ -6,13 +6,11 @@
 #include <signal.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <stdio.h>
-#include <poll.h>
-#include <ctype.h>
-#include <assert.h>
-#include <stdlib.h>
+#include <pwd.h>
 
 #define MAX_FDS 512
 #define expect(v) if (!(v)) { fputs("** ERROR " #v "\n", stderr); exit(1); }
@@ -268,6 +266,13 @@ static int load_conf(const char *fn) {
 		} else if (!strcmp(what, "port")) {
 			if (!sscanf(buf, "%d", &server_port))
 				fprintf(stderr, "%s: invalid server port %s\n", fn, buf);
+		} else if (!strcmp(what, "user")) {
+			struct passwd *pw = getpwnam(buf);
+			if (!pw)
+				fprintf(stderr, "%s: no user %s\n", fn, buf);
+			else if (setgid(pw->pw_gid), setuid(pw->pw_uid))
+				fprintf(stderr, "%s: setuid(%d): %s\n",
+				        fn, pw->pw_uid, strerror(errno));
 		} else if (*what != '#') {
 			fprintf(stderr, "%s: garbage definition %s\n", fn, what);
 		}
