@@ -164,25 +164,26 @@ static int load_keycert(const char *fn) {
 	return 0;
 }
 
-static void add_digest(int len, char *dig) {
+static int add_digest(int len, char *dig) {
 	unsigned i, v;
 	digest d;
+
+	if (len != 64)
+		return 0;
 
 	expect(d = malloc(sizeof(struct digest)));
 	d->hosts = NULL;
 	d->next = digests;
 
-	if (len == 64) {
-		for (i = 0; i < 32; ++i) {
-			if (sscanf(dig + i * 2, "%02x", &v) <= 0)
-				goto bad;
-			d->value[i] = v;
+	for (i = 0; i < 32; ++i) {
+		if (sscanf(dig + i * 2, "%02x", &v) <= 0) {
+			free(d);
+			return 0;
 		}
-		digests = d;
-		return;
+		d->value[i] = v;
 	}
-bad:
-	fprintf(stderr, "invalid hash: %s\n", dig);
+	digests = d;
+	return 1;
 }
 
 static int load_conf(const char *fn) {
@@ -200,19 +201,21 @@ static int load_conf(const char *fn) {
 		int n = strlen(buf);
 		while (--n >= 0 && buf[n] > 0 && buf[n] <= ' ')
 			buf[n] = 0;
+		++n;
 		if (!strcmp(what, "sha256")) {
-			add_digest(n, buf);
+			if (!add_digest(n, buf))
+				fprintf(stderr, "%s: invalid hash %s\n", fn, buf);
 		} else if (!strcmp(what, "cert")) {
 			if (cert_loaded)
-				fprintf(stderr, "Duplicate cert entry in %s\n", fn);
+				fprintf(stderr, "%s: duplicate cert entry\n", fn);
 			else if (!load_keycert(buf))
 				return 0;
 			cert_loaded = 1;
 		} else if (!strcmp(what, "port")) {
 			if (!sscanf(buf, "%d", &server_port))
-				fprintf(stderr, "Invalid server port %s in %s\n", buf, fn);
+				fprintf(stderr, "%s: invalid server port %s\n", fn, buf);
 		} else if (*what != '#') {
-			fprintf(stderr, "Garbage definition %s in %s\n", what, fn);
+			fprintf(stderr, "%s: garbage definition %s\n", fn, what);
 		}
 	}
 	return cert_loaded || load_keycert("ssl.pem");
