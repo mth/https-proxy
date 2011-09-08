@@ -1,3 +1,2 @@
-ssl.pem
+server.pem
 sslproxy
-ssl_wrap

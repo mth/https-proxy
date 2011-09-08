@@ -7,5 +7,5 @@ sslproxy: sslproxy.c
 clean:
 	rm -f sslproxy
 
-ssl.pem:
+server.pem:
 	./certgen localhost "$@"
