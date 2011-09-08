@@ -47,6 +47,7 @@ static int fd_count;
 static int server_port = 443;
 static int tls_only;
 static int host_idx;
+static uid_t use_uid;
 static digest digests;
 
 static void rm_conn(con c) {
@@ -268,11 +269,12 @@ static int load_conf(const char *fn) {
 				fprintf(stderr, "%s: invalid server port %s\n", fn, buf);
 		} else if (!strcmp(what, "user")) {
 			struct passwd *pw = getpwnam(buf);
-			if (!pw)
+			if (!pw) {
 				fprintf(stderr, "%s: no user %s\n", fn, buf);
-			else if (setgid(pw->pw_gid), setuid(pw->pw_uid))
-				fprintf(stderr, "%s: setuid(%d): %s\n",
-				        fn, pw->pw_uid, strerror(errno));
+			} else {
+				use_uid = pw->pw_uid;
+				setgid(pw->pw_gid);
+			}
 		} else if (*what != '#') {
 			fprintf(stderr, "%s: garbage definition %s\n", fn, what);
 		}
@@ -535,6 +537,10 @@ int main(int argc, char **argv) {
 	if (!load_conf(cfg))
 		return 1;
 	listen_sock(server_port);
+	if (use_uid && setuid(use_uid)) {
+		fprintf(stderr, "setuid(%d): %s\n", use_uid, strerror(errno));
+		return 1;
+	}
 	for (;;) {
 		if (poll(ev, fd_count, -1) > 0) {
 			after_poll();
