@@ -12,6 +12,7 @@
 #include <poll.h>
 #include <ctype.h>
 #include <assert.h>
+#include <stdlib.h>
 
 #define MAX_FDS 512
 #define expect(v) if (!(v)) { fputs("** ERROR " #v "\n", stderr); exit(1); }
@@ -20,16 +21,13 @@
 void OPENSSL_cpuid_setup();
 void RAND_cleanup();
 
-typedef struct buf {
+typedef struct con {
+	int idx;
+	SSL *s;
+	struct con *other;
 	int len;
 	int start;
 	char data[16384];
-} *buf;
-
-typedef struct con {
-	SSL *s;
-	buf buf;
-	struct con *other;
 } *con;
 
 typedef struct host {
@@ -46,36 +44,28 @@ typedef struct digest {
 
 static SSL_CTX *ctx;
 static struct pollfd ev[MAX_FDS];
-static struct con cons[MAX_FDS];
+static con cons[MAX_FDS];
 static int fd_count;
-static int fd_limit = MAX_FDS;
 static int server_port = 443;
 static int tls_only;
 static int host_idx;
 static digest digests;
 
-static void rm_conn(int n) {
-	con c = cons + n;
+static void rm_conn(con c) {
+	int n;
 
-	//fprintf(stderr, "rm_conn(%d): close(%d)\n", n, ev[n].fd);
-	SSL_free(c->s);
-	free(c->buf);
 	if (c->other) {
 		c->other->other = NULL;
-		if (c->other - cons >= fd_count) 
-			rm_conn(c->other - cons);
+		if (!c->other->idx)
+			rm_conn(c->other);
 	}
-	if (n >= fd_count) {
-		cons[n] = cons[fd_limit++];
-		return;
+	if ((n = c->idx)) {
+		SSL_free(c->s);
+		close(ev[n].fd);
+		ev[n] = ev[--fd_count];
+		(cons[n] = cons[fd_count])->idx = n;
 	}
-	close(ev[n].fd);
-	if (n < --fd_count) {
-		ev[n] = ev[fd_count];
-		*c = cons[fd_count];
-		if (c->other)
-			c->other->other = c;
-	}
+	free(c);
 }
 
 static int verify(X509_STORE_CTX *s, void *arg) {
@@ -295,10 +285,9 @@ static int prepare_sock(int fd, int opt) {
 }
 
 static int forward(con c, host h) {
-	con cp;
-	int fd = -1;
+	int fd;
 
-	if (fd_count >= fd_limit ||
+	if (fd_count >= MAX_FDS ||
 	    (fd = socket(h->ai->ai_family, h->ai->ai_socktype, h->ai->ai_protocol))
 			< 0 || !prepare_sock(fd, 1))
 		goto close;
@@ -306,69 +295,58 @@ static int forward(con c, host h) {
 	if (connect(fd, h->ai->ai_addr, h->ai->ai_addrlen) &&
 			errno != EINPROGRESS) {
 		close(fd);
-close:	rm_conn(c - cons);
+close:	rm_conn(c);
 		return 0;
 	}
 
 	ev[fd_count].fd = fd;
 	ev[fd_count].events = POLLOUT;
-	cons[fd_count] = *(cp = c->other);
-	c->other = cons + fd_count++;
-	if (cp > cons + fd_limit) {
-		*cp = cons[fd_limit];
-		cp->other = cp;
-	}
-	++fd_limit;
+	c->other->idx = fd_count;
+	cons[fd_count++] = c->other;
 	return 1;
 }
 
-static void handle_ssl_error(int n, int r) {
-	r = SSL_get_error(cons[n].s, r);
+static void handle_ssl_error(con c, int r) {
+	r = SSL_get_error(c->s, r);
 	if (r == SSL_ERROR_WANT_READ) {
-		ev[n].events |= POLLIN;
+		ev[c->idx].events |= POLLIN;
 	} else if (r == SSL_ERROR_WANT_WRITE) {
-		ev[n].events |= POLLOUT;
+		ev[c->idx].events |= POLLOUT;
 	} else {
-		if (cons[n].other) {
-			int other = cons[n].other - cons;
-			if (other < fd_count && cons[other].buf->len > 0) {
-				shutdown(ev[other].fd, SHUT_RD);
-			} else if (n < other) {
-				assert(cons[other].other);
-				if (cons[other].other != cons + n)
-					fprintf(stderr, "%d != %d\n", cons[other].other - cons, n);
-				assert(cons[other].other == cons + n);
-				rm_conn(other);
-			}
+		if (c->other) {
+			if (c->other->idx && c->other->len > 0)
+				shutdown(ev[c->other->idx].fd, SHUT_RD);
+			else
+				rm_conn(c->other);
 		}
-		rm_conn(n);
+		rm_conn(c);
 	}
 	ERR_clear_error();
 }
 
 static int ssl_read(con c, int pf) {
 	int ofs, n;
-	buf buf = c->other->buf;
+	con buf = c->other;
 	char *p, *e;
 	host h;
 
 	ofs = buf->start + buf->len;
 	if ((n = sizeof buf->data - 1 - ofs) < sizeof buf->data / 4) {
-		if (c->other - cons >= fd_count)
+		if (!buf->idx)
 			goto close;
 		return 1;
 	}
 	if (!(pf & (POLLIN | POLLOUT))) {
-		ev[c - cons].events |= POLLIN;
+		ev[c->idx].events |= POLLIN;
 		return 1;
 	}
 	if ((n = SSL_read(c->s, buf->data + ofs, n)) <= 0) {
-		handle_ssl_error(c - cons, n);
+		handle_ssl_error(c, n);
 		return 0;
 	}
 	buf->len += n;
-	if ((ofs = c->other - cons) < fd_count) {
-		ev[ofs].events |= POLLOUT;
+	if (buf->idx) {
+		ev[buf->idx].events |= POLLOUT;
 		return 1;
 	}
 	p = buf->data;
@@ -386,78 +364,73 @@ static int ssl_read(con c, int pf) {
 		}
 	}
 close:
-	rm_conn(c - cons);
+	rm_conn(c);
 	return 0;
 }
 
 static int ssl_write(con c) {
-	int r = SSL_write(c->s, c->buf->data, c->buf->len);
-	if (r > 0) {
-		free(c->buf);
-		c->buf = NULL;
-		if (c->other)
-			ev[c->other - cons].events |= POLLIN;
-	} else {
-		handle_ssl_error(c - cons, r);
+	int r = SSL_write(c->s, c->data, c->len);
+	if (r <= 0) {
+		handle_ssl_error(c, r);
+		return 0;
 	}
-	return r;
+	c->start = 0;
+	c->len = 0;
+	if (c->other)
+		ev[c->other->idx].events |= POLLIN;
+	return 1;
+}
+
+static inline con new_con() {
+	con c = malloc(sizeof(con));
+	if (c)
+		memset(c, 0, sizeof(struct con) - sizeof c->data);
+	return c;
 }
 
 static int ssl_accept() {
-	con c, co;
+	con c = NULL;
 	int fd;
-	BIO *bio = NULL;
+	BIO *bio;
 
 	if ((fd = accept(ev[0].fd, NULL, NULL)) < 0 ||
-			!prepare_sock(fd, fd_count + 2 < fd_limit))
+			!prepare_sock(fd, (c = new_con()) != NULL)) {
+		free(c);
 		return 0;
+	}
 	ev[fd_count].fd = fd;
 	ev[fd_count].events = 0;
-	c = cons + fd_count++;
-	memset(c, 0, sizeof(struct con));
-	c->other = co = cons + --fd_limit;
-	co->other = c;
-	co->s = NULL;
-	if (!(co->buf = malloc(sizeof(struct buf))) ||
+	if (!(c->other = new_con()) ||
 	    !(c->s = SSL_new(ctx)) ||
 	    !(bio = BIO_new_socket(fd, 0))) {
 		fputs("SSL error\n", stderr);
-		rm_conn(fd_count - 1);
+		rm_conn(c);
 		return 0;
 	}
+	cons[fd_count] = c;
+	c->idx = fd_count++;
+	c->other->other = c;
 	SSL_set_accept_state(c->s);
 	SSL_set_bio(c->s, bio, bio);
 	ERR_clear_error();
-	co->buf->len = 0;
-	co->buf->start = 0;
 	ssl_read(c, POLLIN);
 	return 1;
 }
 
 static int buf_read(int fd, con c) {
-	int n;
-
-	if (!c || c->buf)
-		return 1;
-	if (!(c->buf = malloc(sizeof(struct buf)))) {
-		if (c < c->other)
-			rm_conn(c->other - cons);
-		return 0;
-	}
-	n = read(fd, c->buf->data, sizeof c->buf->data);
-	if (n < 0 && (errno == EINTR || errno == EAGAIN)) {
-		free(c->buf);
-		c->buf = NULL;
-	} else if (n <= 0) {
-		return 0;
-	} else {
-		c->buf->len = n;
-		ssl_write(c);
+	if (c && c->len <= 0) {
+		int n = read(fd, c->data, sizeof c->data);
+		if (n > 0) {
+			c->len = n;
+			ssl_write(c);
+		} else if (!n || errno != EINTR && errno != EAGAIN) {
+			return 0;
+		}
 	}
 	return 1;
 }
 
-static int buf_write(int fd, buf buf, con other) {
+static int buf_write(int fd, con buf) {
 	int n;
 
 	if (buf->len <= 0)
@@ -468,10 +441,9 @@ static int buf_write(int fd, buf buf, con other) {
 		buf->start += n;
 	} else {
 		buf->start = 0;
-		if (other)
-			ev[other - cons].events |= POLLIN;
+		if (buf->other)
+			ev[buf->other->idx].events |= POLLIN;
 	}
-		
 	return 1;
 }
 
@@ -479,10 +451,10 @@ static void after_poll() {
 	int i;
 
 	for (i = fd_count; --i > 0; ) {
-		con c = cons + i;
+		con c = cons[i];
 
 		if ((ev[i].revents & (POLLHUP | POLLERR))) {
-			rm_conn(i);
+			rm_conn(c);
 			// TODO check socket errors from connect
 			// TODO do nice SSL shutdown?
 			continue;
@@ -490,27 +462,23 @@ static void after_poll() {
 		ev[i].events = POLLHUP | POLLERR;
 		if (c->s) {
 			if ((ev[i].revents & (POLLIN | POLLOUT)) &&
-			    	c->buf && ssl_write(c) <= 0 ||
+			    	c->len > 0 && ssl_write(c) <= 0 ||
 			     c->other && !ssl_read(c, ev[i].revents))
 				continue;
-			if (c->other) {
-				struct buf *b = c->other->buf;
-				if (b->start + b->len < sizeof b->data)
-					ev[i].events |= POLLIN;
-			}
-		} else if ((ev[i].revents & POLLOUT) &&
-				!buf_write(ev[i].fd, c->buf, c->other) ||
-		           (ev[i].revents & POLLIN) &&
-				!buf_read(ev[i].fd, c->other)) {
-			rm_conn(i);
+			if (c->other && c->other->start + c->other->len
+			                   < sizeof c->other->data)
+				ev[i].events |= POLLIN;
+		} else if ((ev[i].revents & POLLOUT) && !buf_write(ev[i].fd, c) ||
+		           (ev[i].revents & POLLIN) && !buf_read(ev[i].fd, c->other)) {
+			rm_conn(c);
 			continue;
-		} else if (c->other && !c->other->buf) {
+		} else if (c->other && c->other->len <= 0) {
 			ev[i].events |= POLLIN;
 		}
-		if (c->buf && c->buf->len > 0)
+		if (c->len > 0)
 			ev[i].events |= POLLOUT;
 		else if (!c->other)
-			rm_conn(i);
+			rm_conn(c);
 	}
 	if ((ev[0].revents & POLLIN))
 		ssl_accept();
