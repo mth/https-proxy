@@ -148,7 +148,7 @@ static void handle_ssl_error(int n, int r) {
 	} else {
 		if (cons[n].other) {
 			int other = cons[n].other - cons;
-			if (cons[other].buf->len > 0)
+			if (other < fd_count && cons[other].buf->len > 0)
 				shutdown(ev[other].fd, SHUT_RD);
 			else if (n < other)
 				rm_conn(other);
@@ -158,19 +158,20 @@ static void handle_ssl_error(int n, int r) {
 	ERR_clear_error();
 }
 
-static void ssl_read(struct con *c) {
+static int ssl_read(struct con *c) {
 	int ofs, n;
 	struct buf *buf = c->other->buf;
 
 	ofs = buf->start + buf->len;
 	if ((n = sizeof buf->data - 1 - ofs) < sizeof buf->data / 4)
-		return;
+		return 1;
 	if ((n = SSL_read(c->s, buf->data + ofs, n)) <= 0) {
 		handle_ssl_error(c - cons, n);
-		return;
+		return 0;
 	}
 	buf->len += n;
 	fprintf(stderr, "buf->len = %d\n", buf->len);
+	return n;
 }
 
 static int ssl_write(struct con *c) {
@@ -274,18 +275,23 @@ static void after_poll() {
 		ev[i].events = POLLHUP | POLLERR;
 		if (c->s) {
 			if ((ev[i].revents & (POLLIN | POLLOUT)) &&
-			    (!c->buf || ssl_write(c) > 0) && c->other)
-				ssl_read(c);
-			continue;
-		}
-		if ((ev[i].revents & POLLOUT) && !buf_write(ev[i].fd, c->buf) ||
-		    (ev[i].revents & POLLIN) && !buf_read(ev[i].fd, c->other)) {
+			    (c->buf && ssl_write(c) <= 0) ||
+			     c->other && ssl_read(c) <= 0)
+				continue;
+			if (c->other) {
+				struct buf *b = c->other->buf;
+				if (b->start + b->len < sizeof b->data)
+					ev[i].events |= POLLIN;
+			}
+		} else if ((ev[i].revents & POLLOUT) &&
+				!buf_write(ev[i].fd, c->buf) ||
+		           (ev[i].revents & POLLIN) &&
+				!buf_read(ev[i].fd, c->other)) {
 			rm_conn(i);
 			continue;
-		}
-		if (c->other && !c->other->buf)
+		} else if (c->other && !c->other->buf)
 			ev[i].events |= POLLIN;
-		if (c->buf->len >= 0)
+		if (c->buf && c->buf->len >= 0)
 			ev[i].events |= POLLOUT;
 		else if (!c->other)
 			rm_conn(i);
