@@ -170,8 +170,12 @@ static int ssl_read(struct con *c) {
 		return 0;
 	}
 	buf->len += n;
+	if ((ofs = c->other - cons) < fd_count) {
+		ev[ofs].events |= POLLOUT;
+		return 1;
+	}
 	fprintf(stderr, "buf->len = %d\n", buf->len);
-	return n;
+	return 1;
 }
 
 static int ssl_write(struct con *c) {
@@ -179,6 +183,8 @@ static int ssl_write(struct con *c) {
 	if (r > 0) {
 		free(c->buf);
 		c->buf = NULL;
+		if (c->other)
+			ev[c->other - cons].events |= POLLIN;
 	} else {
 		handle_ssl_error(c - cons, r);
 	}
@@ -281,7 +287,7 @@ static void after_poll() {
 		if (c->s) {
 			if ((ev[i].revents & (POLLIN | POLLOUT)) &&
 			    (c->buf && ssl_write(c) <= 0) ||
-			     c->other && ssl_read(c) <= 0)
+			     c->other && !ssl_read(c))
 				continue;
 			if (c->other) {
 				struct buf *b = c->other->buf;
