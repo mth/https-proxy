@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <poll.h>
 #include <alloca.h>
+#include <ctype.h>
 
 #define MAX_FDS 512
 #define expect(v) if (!(v)) { fputs("** ERROR " #v "\n", stderr); exit(1); }
@@ -17,26 +18,39 @@
 void OPENSSL_cpuid_setup();
 void RAND_cleanup();
 
-struct buf {
+typedef struct buf {
 	int len;
 	int start;
 	char data[16384];
-};
+} *buf;
 
-struct con {
+typedef struct con {
 	SSL *s;
-	struct buf *buf;
+	buf buf;
 	struct con *other;
-};
+} *con;
+
+typedef struct host {
+	struct sockaddr *addr;
+	struct host *next;
+	char name[1];
+} *host;
+
+typedef struct digest {
+	host hosts;
+	struct digest *next;
+	char value[32];
+} *digest;
 
 static SSL_CTX *ctx;
 static struct pollfd ev[MAX_FDS];
 static struct con cons[MAX_FDS];
 static int fd_count;
 static int fd_limit = MAX_FDS;
+static digest digests;
 
 static void rm_conn(int n) {
-	struct con *c = cons + n;
+	con c = cons + n;
 
 	//fprintf(stderr, "rm_conn(%d): close(%d)\n", n, ev[n].fd);
 	SSL_free(c->s);
@@ -94,6 +108,14 @@ static void init_context() {
 	SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_CLIENT);
 }
 
+static void free_context() {
+	ERR_free_strings();
+	ERR_remove_state(0);
+	RAND_cleanup();
+	EVP_cleanup();
+	CRYPTO_cleanup_all_ex_data();
+}
+
 static int load_keycert(const char *fn) {
 	FILE *f;
 	EVP_PKEY *key;
@@ -138,12 +160,49 @@ static int load_keycert(const char *fn) {
 	return 0;
 }
 
-static void free_context() {
-	ERR_free_strings();
-	ERR_remove_state(0);
-	RAND_cleanup();
-	EVP_cleanup();
-	CRYPTO_cleanup_all_ex_data();
+static void add_digest(int len, char *dig) {
+	unsigned i, v;
+	digest d;
+
+	expect(d = malloc(sizeof(struct digest)));
+	d->hosts = NULL;
+	d->next = digests;
+
+	if (len == 64) {
+		for (i = 0; i < 32; ++i) {
+			if (sscanf(dig + i * 2, "%02x", &v) <= 0)
+				goto bad;
+			d->value[i] = v;
+		}
+		digests = d;
+		return;
+	}
+bad:
+	fprintf(stderr, "invalid hash: %s\n", dig);
+}
+
+static int load_conf(const char *fn) {
+	char what[10];
+	char buf[256];
+	FILE *f;
+	int cert_loaded = 0;;
+
+	if (!(f = fopen(fn, "r"))) {
+		perror(fn);
+		return 0;
+	}
+
+	while (fscanf(f, "%9s ", what) && fgets(buf, sizeof buf, f)) {
+		int n = strlen(buf);
+		while (--n >= 0 && buf[n] > 0 && buf[n] <= ' ')
+			buf[n] = 0;
+		if (!strcmp(what, "sha256")) {
+			add_digest(buf);
+		} else if (!strcmp(what, "cert")) {
+
+		}
+	}
+	return 1;
 }
 
 static void handle_ssl_error(int n, int r) {
@@ -165,10 +224,10 @@ static void handle_ssl_error(int n, int r) {
 	ERR_clear_error();
 }
 
-static int ssl_read(struct con *c, int pf) {
+static int ssl_read(con c, int pf) {
 	int ofs, n;
 	char *p, *e;
-	struct buf *buf = c->other->buf;
+	buf buf = c->other->buf;
 
 	ofs = buf->start + buf->len;
 	if ((n = sizeof buf->data - 1 - ofs) < sizeof buf->data / 4) {
@@ -204,7 +263,7 @@ close:
 	return 0;
 }
 
-static int ssl_write(struct con *c) {
+static int ssl_write(con c) {
 	int r = SSL_write(c->s, c->buf->data, c->buf->len);
 	if (r > 0) {
 		free(c->buf);
@@ -218,7 +277,7 @@ static int ssl_write(struct con *c) {
 }
 
 static int ssl_accept() {
-	struct con *c, *co;
+	con c, co;
 	int fd, opt = 1;
 	BIO *bio = NULL;
 
@@ -254,7 +313,7 @@ static int ssl_accept() {
 	return 1;
 }
 
-static int buf_read(int fd, struct con *c) {
+static int buf_read(int fd, con c) {
 	int n;
 
 	if (!c || c->buf)
@@ -277,7 +336,7 @@ static int buf_read(int fd, struct con *c) {
 	return 1;
 }
 
-static int buf_write(int fd, struct buf *buf, struct con *other) {
+static int buf_write(int fd, buf buf, con other) {
 	int n;
 
 	if (buf->len <= 0)
@@ -299,7 +358,7 @@ static void after_poll() {
 	int i;
 
 	for (i = fd_count; --i > 0; ) {
-		struct con *c = cons + i;
+		con c = cons + i;
 
 		if ((ev[i].revents & (POLLHUP | POLLERR))) {
 			rm_conn(i);
@@ -355,6 +414,9 @@ static void listen_sock(int port) {
 
 int main() {
 	init_context();
+	if (!load_conf("https.conf")) {
+		return 1;
+	}
 	if (!load_keycert("ssl.pem")) {
 		return 1;
 	}
