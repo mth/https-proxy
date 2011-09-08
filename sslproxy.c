@@ -48,6 +48,7 @@ static struct con cons[MAX_FDS];
 static int fd_count;
 static int fd_limit = MAX_FDS;
 static int server_port = 443;
+static int host_idx;
 static digest digests;
 
 static void rm_conn(int n) {
@@ -75,19 +76,28 @@ static void rm_conn(int n) {
 }
 
 static int verify(X509_STORE_CTX *s, void *arg) {
+	SSL *ssl;
 	digest i;
 	unsigned char md[SHA256_LEN];
 	unsigned len = sizeof md;
 	const EVP_MD *alg = EVP_sha256();
 
-	if (EVP_MD_size(alg) != len || !X509_digest(s->cert, alg, md, &len)) {
+	if (EVP_MD_size(alg) != len || !X509_digest(s->cert, alg, md, &len) ||
+	    !(ssl = X509_STORE_CTX_get_app_data(s))) {
 		s->error = X509_V_ERR_APPLICATION_VERIFICATION;
 		return 0;
 	}
 	ERR_clear_error();
 	for (i = digests; i; i = i->next) {
-		if (!memcmp(i->value, md, sizeof md))
+		if (!memcmp(i->value, md, sizeof md)) {
+			while (i && !i->hosts)
+				i = i->next;
+			if (i && !SSL_set_ex_data(ssl, host_idx, i->hosts)) {
+				s->error = X509_V_ERR_APPLICATION_VERIFICATION;
+				return 0;
+			}
 			return 1;
+		}
 	}
 	s->error = X509_V_ERR_CERT_REJECTED;
 	return 0;
@@ -105,6 +115,8 @@ static void init_context() {
 	EVP_add_digest(EVP_sha256());
 	signal(SIGPIPE, SIG_IGN);
 
+	host_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+	expect(host_idx >= 0);
 	expect(ctx = SSL_CTX_new(TLSv1_server_method()));
 	SSL_CTX_set_cert_verify_callback(ctx, verify, NULL);
 	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_CLIENT_ONCE |
