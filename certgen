@@ -1,0 +1,37 @@
+#!/bin/sh -e
+
+MODE="$1"
+case "$1" in
+	-client) shift
+	;;
+	-no-dh) shift
+	;;
+	*) MODE="server"
+	;;
+esac
+
+if [ "$2" = "" ]; then
+	cat <<HELP
+certgen [-no-dh] host-name server.pem"
+certgen -client common-name client.p12"
+
+For example: ./certgen localhost ssl.pem"
+
+HELP
+	exit 1
+fi
+
+PNAME="$2"
+
+[ "$MODE" != "-client" ] || PNAME="$2.tmp"
+
+openssl req -newkey rsa:2048 -nodes -keyout "$PNAME" -subj "/CN=$1"\
+| openssl x509 -req -signkey "$PNAME" -sha256 -days 730 >> "$PNAME"
+
+[ "$MODE" != "server" ] || openssl dhparam 2048 >> ssl.pem
+
+if [ "$MODE" = "-client" ]; then
+	openssl pkcs12 -export -in "$PNAME" -inkey "$PNAME"\
+		-certfile "$PNAME" -name "$1" -out "$2"
+	rm -f "$PNAME"
+fi
