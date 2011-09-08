@@ -291,7 +291,6 @@ static int forward(con c, host h) {
 	con cp;
 	int fd = -1;
 
-	fprintf(stderr, "host matched\n");
 	if (fd_count >= fd_limit ||
 	    (fd = socket(h->ai->ai_family, h->ai->ai_socktype, h->ai->ai_protocol))
 			< 0 || !prepare_sock(fd, 1))
