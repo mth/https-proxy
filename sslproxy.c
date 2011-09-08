@@ -55,7 +55,7 @@ static digest digests;
 static void rm_conn(int n) {
 	con c = cons + n;
 
-	fprintf(stderr, "rm_conn(%d): close(%d)\n", n, ev[n].fd);
+	//fprintf(stderr, "rm_conn(%d): close(%d)\n", n, ev[n].fd);
 	SSL_free(c->s);
 	free(c->buf);
 	if (c->other) {
@@ -323,8 +323,6 @@ static void handle_ssl_error(int n, int r) {
 	} else if (r == SSL_ERROR_WANT_WRITE) {
 		ev[n].events |= POLLOUT;
 	} else {
-		fprintf(stderr, "err=%d\n", r);
-		ERR_print_errors_fp(stderr);
 		if (cons[n].other) {
 			int other = cons[n].other - cons;
 			if (other < fd_count && cons[other].buf->len > 0)
@@ -382,11 +380,7 @@ close:
 }
 
 static int ssl_write(con c) {
-	int r;
-	ERR_clear_error();
-	fprintf(stderr, "SSL_write(%p, %d %s)\n", c->buf->data,
-		c->buf->len, c->buf->data);
-	r = SSL_write(c->s, c->buf->data, c->buf->len);
+	int r = SSL_write(c->s, c->buf->data, c->buf->len);
 	if (r > 0) {
 		free(c->buf);
 		c->buf = NULL;
@@ -436,7 +430,7 @@ static int buf_read(int fd, con c) {
 
 	if (!c || c->buf)
 		return 1;
-	if (!(c->buf = malloc(sizeof(c->buf)))) {
+	if (!(c->buf = malloc(sizeof(struct buf)))) {
 		if (c < c->other)
 			rm_conn(c->other - cons);
 		return 0;
