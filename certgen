@@ -6,6 +6,11 @@ case "$1" in
 	;;
 	-no-dh) shift
 	;;
+	-sha) shift
+	openssl pkcs12 -nodes -clcerts -in lohesert.p12 |\
+		openssl x509 -outform der | openssl dgst -sha256
+	exit 0
+	;;
 	*) MODE="server"
 	;;
 esac
@@ -15,6 +20,7 @@ if [ "$2" = "" ]; then
 
 certgen [-no-dh] host-name server.pem
 certgen -client common-name client.p12
+certgen -sha client.p12
 
 For example: ./certgen '*.localnet' ssl.pem
 
@@ -34,5 +40,7 @@ openssl req -newkey rsa:2048 -nodes -keyout "$PNAME" -subj "/CN=$1"\
 if [ "$MODE" = "-client" ]; then
 	openssl pkcs12 -export -in "$PNAME" -inkey "$PNAME"\
 		-certfile "$PNAME" -name "$1" -out "$2"
+	echo "Certificate sha256 hash"
+	openssl x509 -in "$PNAME" -outform der | openssl dgst -sha256
 	rm -f "$PNAME"
 fi
