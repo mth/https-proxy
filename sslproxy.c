@@ -495,7 +495,7 @@ static void after_poll() {
 		} else if (c->other && !c->other->buf) {
 			ev[i].events |= POLLIN;
 		}
-		if (c->buf && c->buf->len >= 0)
+		if (c->buf && c->buf->len > 0)
 			ev[i].events |= POLLOUT;
 		else if (!c->other)
 			rm_conn(i);
