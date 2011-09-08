@@ -295,8 +295,9 @@ static void handle_ssl_error(int n, int r) {
 	ERR_clear_error();
 }
 
-static int forward(con c, struct addrinfo *ai) {
+static int forward(con c, host h) {
 	fprintf(stderr, "host matched\n");
+	SSL_set_ex_data(c->s, host_idx, h);
 	return 1;
 }
 
@@ -336,7 +337,7 @@ static int ssl_read(con c, int pf) {
 	for (h = SSL_get_ex_data(c->s, host_idx); h; h = h->next) {
 		if (!strcmp(h->name, p)) {
 			*e = '\r';
-			return forward(c, h->ai);
+			return forward(c, h);
 		}
 	}
 close:
