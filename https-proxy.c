@@ -141,7 +141,7 @@ static void init_context() {
 		SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2);
 	}
 	SSL_CTX_set_cert_verify_callback(ctx, verify, NULL);
-	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_CLIENT_ONCE |
+	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER |// SSL_VERIFY_CLIENT_ONCE |
 	                   SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
 	strcpy(sess_ctx, "HsP-");
 	gethostname(sess_ctx + 4, sizeof sess_ctx - 4);
