@@ -53,6 +53,8 @@ static digest digests;
 static void rm_conn(con c) {
 	int n;
 
+	if (!c)
+		return;
 	if (c->other) {
 		c->other->other = NULL;
 		if (!c->other->idx)
@@ -292,30 +294,9 @@ static int prepare_sock(int fd, int opt) {
 	return 1;
 }
 
-static int forward(con c, host h) {
-	int fd;
-
-	if (fd_count >= MAX_FDS ||
-	    (fd = socket(h->ai->ai_family, h->ai->ai_socktype, h->ai->ai_protocol))
-			< 0 || !prepare_sock(fd, 1))
-		goto close;
-
-	if (connect(fd, h->ai->ai_addr, h->ai->ai_addrlen) &&
-			errno != EINPROGRESS) {
-		close(fd);
-close:	rm_conn(c);
-		return 0;
-	}
-
-	ev[fd_count].fd = fd;
-	ev[fd_count].events = POLLOUT;
-	c->other->idx = fd_count;
-	cons[fd_count++] = c->other;
-	return 1;
-}
-
 static void handle_ssl_error(con c, int r) {
 	r = SSL_get_error(c->s, r);
+
 	if (r == SSL_ERROR_WANT_READ) {
 		ev[c->idx].events |= POLLIN;
 	} else if (r == SSL_ERROR_WANT_WRITE) {
@@ -332,6 +313,45 @@ static void handle_ssl_error(con c, int r) {
 	ERR_clear_error();
 }
 
+static int closereq(con c) {
+	int r;
+
+	if (c->other && c->other->len <= 0) {
+		c->len = 0;
+		if (!c->s)
+			return closereq(c->other);
+		rm_conn(c->other);
+	}
+	if (!c->s || (r = SSL_shutdown(c->s)) > 0) {
+		rm_conn(c);
+	} else {
+		c->start = -1;
+		handle_ssl_error(c, r);
+	}
+	return 0;
+}
+
+static int forward(con c, host h) {
+	int fd;
+
+	if (fd_count >= MAX_FDS ||
+	    (fd = socket(h->ai->ai_family, h->ai->ai_socktype, h->ai->ai_protocol))
+			< 0 || !prepare_sock(fd, 1))
+		return closereq(c);
+
+	if (connect(fd, h->ai->ai_addr, h->ai->ai_addrlen) &&
+			errno != EINPROGRESS) {
+		close(fd);
+		return closereq(c);
+	}
+
+	ev[fd_count].fd = fd;
+	ev[fd_count].events = POLLOUT;
+	c->other->idx = fd_count;
+	cons[fd_count++] = c->other;
+	return 1;
+}
+
 static int ssl_read(con c, int pf) {
 	int ofs, n;
 	con buf = c->other;
@@ -339,11 +359,8 @@ static int ssl_read(con c, int pf) {
 	host h;
 
 	ofs = buf->start + buf->len;
-	if ((n = sizeof buf->data - 1 - ofs) < sizeof buf->data / 4) {
-		if (!buf->idx)
-			goto close;
-		return 1;
-	}
+	if ((n = sizeof buf->data - 1 - ofs) < sizeof buf->data / 4)
+		return buf->idx ? 1 : closereq(c);
 	if (!(pf & (POLLIN | POLLOUT))) {
 		ev[c->idx].events |= POLLIN;
 		return 1;
@@ -361,7 +378,7 @@ static int ssl_read(con c, int pf) {
 	p[buf->len] = 0;
 	while ((p = strstr(p, "\r\n")) && strncasecmp(p += 2, "host:", 5))
 		if (*p == '\r')
-			goto close;
+			return closereq(c);
 	if (!p || !*(p += 5, p += strspn(p, " ")) || !(e = strchr(p, '\r')))
 		return 1;
 	*e = 0;
@@ -371,9 +388,7 @@ static int ssl_read(con c, int pf) {
 			return forward(c, h);
 		}
 	}
-close:
-	rm_conn(c);
-	return 0;
+	return closereq(c);
 }
 
 static int ssl_write(con c) {
@@ -461,6 +476,8 @@ static void after_poll() {
 	for (i = fd_count; --i > 0; ) {
 		con c = cons[i];
 
+		if (!c)
+			continue;
 		if ((ev[i].revents & (POLLHUP | POLLERR))) {
 			rm_conn(c);
 			// TODO check socket errors from connect
@@ -470,15 +487,16 @@ static void after_poll() {
 		ev[i].events = POLLHUP | POLLERR;
 		if (c->s) {
 			if ((ev[i].revents & (POLLIN | POLLOUT)) &&
-			    	c->len > 0 && ssl_write(c) <= 0 ||
-			     c->other && !ssl_read(c, ev[i].revents))
+			    c->start < 0 && !closereq(c) ||
+			    c->len > 0 && ssl_write(c) <= 0 ||
+			    c->other && !ssl_read(c, ev[i].revents))
 				continue;
 			if (c->other && c->other->start + c->other->len
 			                   < sizeof c->other->data)
 				ev[i].events |= POLLIN;
 		} else if ((ev[i].revents & POLLOUT) && !buf_write(ev[i].fd, c) ||
 		           (ev[i].revents & POLLIN) && !buf_read(ev[i].fd, c->other)) {
-			rm_conn(c);
+			closereq(c);
 			continue;
 		} else if (c->other && c->other->len <= 0) {
 			ev[i].events |= POLLIN;
@@ -486,7 +504,7 @@ static void after_poll() {
 		if (c->len > 0)
 			ev[i].events |= POLLOUT;
 		else if (!c->other)
-			rm_conn(c);
+			closereq(c);
 	}
 	if ((ev[0].revents & POLLIN))
 		ssl_accept();
