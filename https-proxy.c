@@ -46,7 +46,7 @@ static struct pollfd ev[MAX_FDS];
 static con cons[MAX_FDS];
 static int fd_count;
 static int server_port = 443;
-static int tls_only;
+static int tls_only = 1;
 static int host_idx;
 static uid_t use_uid;
 static digest digests;
@@ -578,7 +578,7 @@ static int help() {
 	puts("\nhttps-proxy [options]\n\n"
 	     "\t-c config  Configuration file to use\n"
 	     "\t-h         Print this help\n"
-	     "\t-t         Allow only TLSv1 (no SSL)\n");
+	     "\t-s3        Allow SSLv3 (otherwise only TLSv1)\n");
 	return 0;
 }
 
@@ -589,8 +589,8 @@ int main(int argc, char **argv) {
 	for (i = 1; i < argc; ++i) {
 		if (!strcmp(argv[i], "-c") && ++i < argc)
 			cfg = argv[i];
-		else if (!strcmp(argv[i], "-t"))
-			tls_only = 1;
+		else if (!strcmp(argv[i], "-s3"))
+			tls_only = 0;
 		else if (!strcmp(argv[i], "-h"))
 			return help();
 	}
