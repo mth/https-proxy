@@ -29,7 +29,7 @@ HELP
 fi
 
 PNAME="$2"
-X="/O=https-proxy /OU=https-proxy"
+X="-subj /O=https-proxy -subj /OU=https-proxy"
 
 if [ "$MODE" = "-client" ]; then
 	PNAME="$2.tmp"
