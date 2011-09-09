@@ -329,7 +329,6 @@ static void handle_ssl_error(con c, int r) {
 	} else if (r == SSL_ERROR_WANT_WRITE) {
 		ev[c->idx].events |= POLLOUT;
 	} else {
-		ERR_print_errors_fp(stderr);
 		if (c->other) {
 			if (c->other->idx && c->other->len > 0)
 				shutdown(ev[c->other->idx].fd, SHUT_RD);
