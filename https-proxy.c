@@ -141,7 +141,7 @@ static void init_context() {
 		SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2);
 	}
 	SSL_CTX_set_cert_verify_callback(ctx, verify, NULL);
-	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER |// SSL_VERIFY_CLIENT_ONCE |
+	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_CLIENT_ONCE |
 	                   SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
 	strcpy(sess_ctx, "HsP-");
 	gethostname(sess_ctx + 4, sizeof sess_ctx - 4);
@@ -228,6 +228,7 @@ static int add_host(char *name) {
 	char *node, *service;
 	struct addrinfo hints, *r = NULL;
 	int res;
+	digest to;
 	host h;
 
 	if ((node = strpbrk(name, " \t")))
@@ -255,8 +256,9 @@ static int add_host(char *name) {
 		return 0;
 	}
 	h->ai = r;
-	h->next = digests->hosts;
-	digests->hosts = h;
+	for (to = digests; !to->hosts && to->next; to = to->next);
+	h->next = to->hosts;
+	to->hosts = h;
 	return 1;
 }
 
