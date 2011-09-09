@@ -71,48 +71,54 @@ static void rm_conn(con c) {
 	cons[fd_count] = NULL;
 }
 
-static int verify(X509_STORE_CTX *s, void *arg) {
-	SSL *ssl;
+static int check_cert(X509 *cert, host *hosts) {
 	digest i;
 	unsigned char md[SHA256_LEN];
 	unsigned len = sizeof md;
 	const EVP_MD *alg = EVP_sha256();
 
-	s->error = X509_V_ERR_APPLICATION_VERIFICATION;
-	if (EVP_MD_size(alg) != len || !X509_digest(s->cert, alg, md, &len)) {
-		syslog(LOG_ERR, "No verify digest available");
-		return 0;
+	if (!cert) {
+		return X509_V_ERR_APPLICATION_VERIFICATION;
 	}
-	if (!(ssl = X509_STORE_CTX_get_app_data(s))) {
-		syslog(LOG_ERR, "Cannot get SSL object in verify callback");
-		return 0;
+	if (EVP_MD_size(alg) != len || !X509_digest(cert, alg, md, &len)) {
+		syslog(LOG_ERR, "No verify digest available");
+		return X509_V_ERR_APPLICATION_VERIFICATION;
 	}
 	ERR_clear_error();
 	for (i = digests; i; i = i->next) {
 		if (!memcmp(i->value, md, sizeof md)) {
 			while (i && !i->hosts)
 				i = i->next;
-			if (!i) {
-				syslog(LOG_INFO | LOG_AUTHPRIV, "Rejecting "
-				       "client certificate without allowed hosts");
-				goto reject;
-			}
-			if (!SSL_set_ex_data(ssl, host_idx, i->hosts)) {
-				syslog(LOG_INFO | LOG_AUTHPRIV,
-				       "Unknown client certificate rejected");
-				return 0;
-			}
-			s->error = X509_V_OK;
-			return 1;
+			*hosts = i ? i->hosts : NULL;
+			return X509_V_OK;
 		}
 	}
 	syslog(LOG_INFO | LOG_AUTHPRIV, "Unknown client certificate rejected");
-reject:
-	s->error = X509_V_ERR_CERT_REJECTED;
-	return 0;
+	return  X509_V_ERR_CERT_REJECTED;
+}
+
+static int verify(X509_STORE_CTX *s, void *arg) {
+	host h = NULL;
+	SSL *ssl;
+	int result;
+
+	s->error = X509_V_ERR_APPLICATION_VERIFICATION;
+	if (!(ssl = X509_STORE_CTX_get_app_data(s))) {
+		syslog(LOG_ERR, "Cannot get SSL object in verify callback");
+		return 0;
+	}
+	result = check_cert(s->cert, &h);
+	if (h && !SSL_set_ex_data(ssl, host_idx, h)) {
+		syslog(LOG_ERR, "SSL_set_ex_data failed");
+		return 0;
+	}
+	s->error = result;
+	return result == X509_V_OK;
 }
 
 static void init_context() {
+	char sess_ctx[SSL_MAX_SSL_SESSION_ID_LENGTH];
+
 	SSL_library_init();
 	ERR_load_crypto_strings();
 	SSL_load_error_strings();
@@ -136,7 +142,11 @@ static void init_context() {
 	SSL_CTX_set_cert_verify_callback(ctx, verify, NULL);
 	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_CLIENT_ONCE |
 	                   SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
-	SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_CLIENT);
+	strcpy(sess_ctx, "HsP-");
+	gethostname(sess_ctx + 4, sizeof sess_ctx - 4);
+	SSL_CTX_set_session_id_context(ctx, (unsigned char*) sess_ctx,
+	                               strlen(sess_ctx));
+	//SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_BOTH);
 }
 
 static void free_context() {
@@ -367,11 +377,38 @@ static int forward(con c, host h) {
 	return 1;
 }
 
+static int check_host(con c, char *p) {
+	char *e;
+	host h;
+
+	while ((p = strstr(p, "\r\n")) && strncasecmp(p += 2, "host:", 5)) {
+		if (*p == '\r') {
+			syslog(LOG_INFO, "Cannot determine host");
+			return closereq(c);
+		}
+	}
+	if (!p || !*(p += 5, p += strspn(p, " ")) || !(e = strchr(p, '\r')))
+		return 1;
+	*e = 0;
+	if (!(h = SSL_get_ex_data(c->s, host_idx)))
+	    check_cert(SSL_get_peer_certificate(c->s), &h);
+	if (!h) {
+		syslog(LOG_INFO, "No hosts when checking %s", p);
+		return closereq(c);
+	}
+	for (; h; h = h->next) {
+		if (!strcmp(h->name, p)) {
+			*e = '\r';
+			return forward(c, h);
+		}
+	}
+	syslog(LOG_INFO, "Unknown host (%s)", p);
+	return closereq(c);
+}
+
 static int ssl_read(con c, int pf) {
 	int ofs, n;
 	con buf = c->other;
-	char *p, *e;
-	host h;
 
 	ofs = buf->start + buf->len;
 	if ((n = sizeof buf->data - 1 - ofs) < sizeof buf->data / 4)
@@ -386,25 +423,12 @@ static int ssl_read(con c, int pf) {
 		return 0;
 	}
 	buf->len += n;
-	if (buf->idx) {
-		ev[buf->idx].events |= POLLOUT;
-		return 1;
+	if (!buf->idx) {
+		buf->data[buf->len] = 0;
+		return check_host(c, buf->data);
 	}
-	p = buf->data;
-	p[buf->len] = 0;
-	while ((p = strstr(p, "\r\n")) && strncasecmp(p += 2, "host:", 5))
-		if (*p == '\r')
-			return closereq(c);
-	if (!p || !*(p += 5, p += strspn(p, " ")) || !(e = strchr(p, '\r')))
-		return 1;
-	*e = 0;
-	for (h = SSL_get_ex_data(c->s, host_idx); h; h = h->next) {
-		if (!strcmp(h->name, p)) {
-			*e = '\r';
-			return forward(c, h);
-		}
-	}
-	return closereq(c);
+	ev[buf->idx].events |= POLLOUT;
+	return 1;
 }
 
 static int ssl_write(con c) {
