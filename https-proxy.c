@@ -143,8 +143,9 @@ static void init_context() {
 	SSL_CTX_set_cert_verify_callback(ctx, verify, NULL);
 	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_CLIENT_ONCE |
 	                   SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
-	strcpy(sess_ctx, "HsP-");
+	strcpy(sess_ctx, "HsP?");
 	gethostname(sess_ctx + 4, sizeof sess_ctx - 4);
+	sess_ctx[sizeof sess_ctx - 1] = 0;
 	SSL_CTX_set_session_id_context(ctx, (unsigned char*) sess_ctx,
 	                               strlen(sess_ctx));
 	//SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_BOTH);

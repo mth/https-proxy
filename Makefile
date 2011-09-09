@@ -1,5 +1,5 @@
-#CFLAGS=-O2
-CFLAGS=-g -O
+CFLAGS=-O2
+#CFLAGS=-g -O
 BINDIR=/usr/local/sbin
 
 https-proxy: https-proxy.c
