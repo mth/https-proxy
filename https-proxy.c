@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <syslog.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <stdio.h>
@@ -77,9 +78,13 @@ static int verify(X509_STORE_CTX *s, void *arg) {
 	unsigned len = sizeof md;
 	const EVP_MD *alg = EVP_sha256();
 
-	if (EVP_MD_size(alg) != len || !X509_digest(s->cert, alg, md, &len) ||
-	    !(ssl = X509_STORE_CTX_get_app_data(s))) {
-		s->error = X509_V_ERR_APPLICATION_VERIFICATION;
+	s->error = X509_V_ERR_APPLICATION_VERIFICATION;
+	if (EVP_MD_size(alg) != len || !X509_digest(s->cert, alg, md, &len)) {
+		syslog(LOG_ERR, "No verify digest available");
+		return 0;
+	}
+	if (!(ssl = X509_STORE_CTX_get_app_data(s))) {
+		syslog(LOG_ERR, "Cannot get SSL object in verify callback");
 		return 0;
 	}
 	ERR_clear_error();
@@ -87,14 +92,20 @@ static int verify(X509_STORE_CTX *s, void *arg) {
 		if (!memcmp(i->value, md, sizeof md)) {
 			while (i && !i->hosts)
 				i = i->next;
-			if (!i)
-				break;
-			if (SSL_set_ex_data(ssl, host_idx, i->hosts))
+			if (!i) {
+				syslog(LOG_INFO | LOG_AUTHPRIV, "Rejecting "
+				       "client certificate without allowed hosts");
+				goto reject;
+			}
+			if (!SSL_set_ex_data(ssl, host_idx, i->hosts)) {
+				s->error = X509_V_OK;
 				return 1;
-			s->error = X509_V_ERR_APPLICATION_VERIFICATION;
+			}
 			return 0;
 		}
 	}
+	syslog(LOG_INFO | LOG_AUTHPRIV, "Unknown client certificate rejected");
+reject:
 	s->error = X509_V_ERR_CERT_REJECTED;
 	return 0;
 }
@@ -302,6 +313,7 @@ static void handle_ssl_error(con c, int r) {
 	} else if (r == SSL_ERROR_WANT_WRITE) {
 		ev[c->idx].events |= POLLOUT;
 	} else {
+		ERR_print_errors_fp(stderr);
 		if (c->other) {
 			if (c->other->idx && c->other->len > 0)
 				shutdown(ev[c->other->idx].fd, SHUT_RD);
@@ -322,6 +334,7 @@ static int closereq(con c) {
 			return closereq(c->other);
 		rm_conn(c->other);
 	}
+	ERR_clear_error();
 	if (!c->s || (r = SSL_shutdown(c->s)) > 0) {
 		rm_conn(c);
 	} else {
@@ -365,6 +378,7 @@ static int ssl_read(con c, int pf) {
 		ev[c->idx].events |= POLLIN;
 		return 1;
 	}
+	ERR_clear_error();
 	if ((n = SSL_read(c->s, buf->data + ofs, n)) <= 0) {
 		handle_ssl_error(c, n);
 		return 0;
@@ -392,6 +406,7 @@ static int ssl_read(con c, int pf) {
 }
 
 static int ssl_write(con c) {
+	ERR_clear_error();
 	int r = SSL_write(c->s, c->data, c->len);
 	if (r <= 0) {
 		handle_ssl_error(c, r);
@@ -426,7 +441,7 @@ static int ssl_accept() {
 	if (!(c->other = new_con()) ||
 	    !(c->s = SSL_new(ctx)) ||
 	    !(bio = BIO_new_socket(fd, 0))) {
-		fputs("SSL error\n", stderr);
+		syslog(LOG_ERR, "Out of memory");
 		rm_conn(c);
 		return 0;
 	}
