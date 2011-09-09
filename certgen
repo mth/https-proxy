@@ -29,15 +29,15 @@ HELP
 fi
 
 PNAME="$2"
-X="-subj /O=https-proxy -subj /OU=https-proxy"
+SUBJ="/O=https proxy/OU=https proxy/CN=$1"
 
 if [ "$MODE" = "-client" ]; then
 	PNAME="$2.tmp"
-	X=""
+	SUBJ="/CN=$1"
 fi
 
-openssl req -newkey rsa:2048 -nodes -keyout "$PNAME" -subj "/CN=$1"\
-$X | openssl x509 -req -signkey "$PNAME" -sha256 -days 730 >> "$PNAME"
+openssl req -newkey rsa:2048 -nodes -keyout "$PNAME" -subj "$SUBJ"\
+| openssl x509 -req -signkey "$PNAME" -sha256 -days 730 >> "$PNAME"
 
 [ "$MODE" != "server" ] || openssl dhparam 2048 >> "$PNAME"
 
