@@ -98,10 +98,12 @@ static int verify(X509_STORE_CTX *s, void *arg) {
 				goto reject;
 			}
 			if (!SSL_set_ex_data(ssl, host_idx, i->hosts)) {
-				s->error = X509_V_OK;
-				return 1;
+				syslog(LOG_INFO | LOG_AUTHPRIV,
+				       "Unknown client certificate rejected");
+				return 0;
 			}
-			return 0;
+			s->error = X509_V_OK;
+			return 1;
 		}
 	}
 	syslog(LOG_INFO | LOG_AUTHPRIV, "Unknown client certificate rejected");
