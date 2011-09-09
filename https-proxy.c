@@ -78,6 +78,7 @@ static int check_cert(X509 *cert, host *hosts) {
 	const EVP_MD *alg = EVP_sha256();
 
 	if (!cert) {
+		syslog(LOG_ERR, "No peer certificate");
 		return X509_V_ERR_APPLICATION_VERIFICATION;
 	}
 	if (EVP_MD_size(alg) != len || !X509_digest(cert, alg, md, &len)) {
