@@ -600,7 +600,7 @@ static int help() {
 	     "\t-c config  Configuration file to use\n"
 	     "\t-h         Print this help\n"
 	     "\t-s3        Allow SSLv3 (otherwise only TLSv1)\n"
-		 "\t-l         List allowed hosts");
+	     "\t-l         List allowed hosts");
 	return 0;
 }
 
