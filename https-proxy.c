@@ -229,7 +229,6 @@ static int add_digest(int len, char *dig) {
 	expect(d = malloc(sizeof(struct digest)));
 	d->hosts = NULL;
 	d->next = digests;
-
 	for (i = 0; i < 32; ++i) {
 		if (sscanf(dig + i * 2, "%02x", &v) <= 0) {
 			free(d);
@@ -245,7 +244,6 @@ static int add_host(char *name) {
 	char *node, *service;
 	struct addrinfo hints, *r = NULL;
 	int res;
-	digest to;
 	host h;
 
 	if ((node = strpbrk(name, " \t")))
@@ -273,17 +271,17 @@ static int add_host(char *name) {
 		return 0;
 	}
 	h->ai = r;
-	for (to = digests; !to->hosts && to->next; to = to->next);
-	h->next = to->hosts;
-	to->hosts = h;
+	h->next = digests->hosts;
+	digests->hosts = h;
 	return 1;
 }
 
-static int load_conf(const char *fn) {
+static int load_conf(const char *fn, int no_cert) {
 	char what[10];
 	char buf[256];
 	FILE *f;
-	int cert_loaded = 0;;
+	int cert_loaded = 0;
+	digest prev, next;
 
 	if (!(f = fopen(fn, "r"))) {
 		perror(fn);
@@ -299,7 +297,8 @@ static int load_conf(const char *fn) {
 			if (!add_digest(n, buf))
 				fprintf(stderr, "%s: invalid hash %s\n", fn, buf);
 		} else if (!strcmp(what, "cert")) {
-			if (cert_loaded)
+			if (no_cert);
+			else if (cert_loaded)
 				fprintf(stderr, "%s: duplicate cert entry\n", fn);
 			else if (!load_keycert(buf))
 				return 0;
@@ -324,6 +323,12 @@ static int load_conf(const char *fn) {
 			fprintf(stderr, "%s: garbage definition %s\n", fn, what);
 		}
 	}
+	for (prev = NULL; digests; digests = next) {
+		next = digests->next;
+		digests->next = prev;
+		prev = digests;
+	}
+	digests = prev;
 	return cert_loaded || load_keycert("ssl.pem");
 }
 
@@ -594,12 +599,34 @@ static int help() {
 	puts("\nhttps-proxy [options]\n\n"
 	     "\t-c config  Configuration file to use\n"
 	     "\t-h         Print this help\n"
-	     "\t-s3        Allow SSLv3 (otherwise only TLSv1)\n");
+	     "\t-s3        Allow SSLv3 (otherwise only TLSv1)\n"
+		 "\t-l         List allowed hosts");
+	return 0;
+}
+
+static int list_conf() {
+	char ip[INET6_ADDRSTRLEN];
+	struct sockaddr_in *a;
+	digest d;
+	host h;
+	int i;
+
+	for (d = digests; d; d = d->next) {
+		for (i = 0; i < sizeof d->value; ++i)
+			printf("%02x", (unsigned char) d->value[i]);
+		puts(":");
+		for (h = d->hosts; h; h = h->next) {
+			a = (struct sockaddr_in*) h->ai->ai_addr;
+			inet_ntop(h->ai->ai_family, &a->sin_addr, ip, sizeof ip);
+			printf("\t%s -> %s:%d\n", h->name,
+			       ip, ntohs(a->sin_port));
+		}
+	}
 	return 0;
 }
 
 int main(int argc, char **argv) {
-	int i;
+	int i, list = 0;
 	const char *cfg = "/etc/https/proxy.conf";;
 
 	for (i = 1; i < argc; ++i) {
@@ -609,11 +636,19 @@ int main(int argc, char **argv) {
 			tls_only = 0;
 		else if (!strcmp(argv[i], "-h"))
 			return help();
+		else if (!strcmp(argv[i], "-l"))
+			list = 1;
+		else {
+			fprintf(stderr, "Unknown argument %s\n", argv[i]);
+			return 1;
+		}
 	}
 
 	init_context();
-	if (!load_conf(cfg))
+	if (!load_conf(cfg, list))
 		return 1;
+	if (list)
+		return list_conf();
 	listen_sock(server_port);
 	if (use_uid && setuid(use_uid)) {
 		fprintf(stderr, "setuid(%d): %s\n", use_uid, strerror(errno));
