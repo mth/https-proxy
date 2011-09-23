@@ -7,7 +7,7 @@ case "$1" in
 	-no-dh) shift
 	;;
 	-sha) shift
-	openssl pkcs12 -nodes -clcerts -in lohesert.p12 |\
+	openssl pkcs12 -nodes -clcerts -in "$1" |\
 		openssl x509 -outform der | openssl dgst -sha256
 	exit 0
 	;;
