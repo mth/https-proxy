@@ -53,7 +53,6 @@ typedef struct host {
 
 typedef struct digest {
 	host hosts;
-	int any_host;
 	struct digest *next;
 	char value[SHA256_LEN];
 } *digest;
@@ -229,7 +228,6 @@ static int add_digest(int len, char *dig) {
 
 	expect(d = malloc(sizeof(struct digest)));
 	d->hosts = NULL;
-	d->any_host = 0;
 	d->next = digests;
 	for (i = 0; i < 32; ++i) {
 		if (sscanf(dig + i * 2, "%02x", &v) <= 0) {
@@ -276,7 +274,7 @@ static int add_host(char *name) {
 	h->next = digests->hosts;
 	digests->hosts = h;
 	if (!strcmp(h->name, "*"))
-		digests->any_host = 1;
+		*h->name = 0;
 	return 1;
 }
 
@@ -310,9 +308,6 @@ static int load_conf(const char *fn, int no_cert) {
 		} else if (!strcmp(what, "allow")) {
 			if (!digests)
 				fprintf(stderr, "%s: allow must follow hash\n", fn);
-			else if (digests->any_host || *arg == '*' && digests->hosts)
-				fprintf(stderr, "%s: only single allow * allowed: %s\n",
-				        fn, arg);
 			else if (!*arg || !add_host(arg))
 				fprintf(stderr, "%s: invalid allow directive: %s\n", fn, arg);
 		} else if (!strcmp(what, "port")) {
@@ -428,7 +423,7 @@ static int check_host(con c, char *p) {
 		return closereq(c);
 	}
 	for (; h; h = h->next) {
-		if (!strcmp(h->name, p)) {
+		if (!strcmp(h->name, p) || !*h->name) {
 			*e = '\r';
 			return forward(c, h);
 		}
