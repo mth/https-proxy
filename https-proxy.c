@@ -53,6 +53,7 @@ typedef struct host {
 
 typedef struct digest {
 	host hosts;
+	int any_host;
 	struct digest *next;
 	char value[SHA256_LEN];
 } *digest;
@@ -228,6 +229,7 @@ static int add_digest(int len, char *dig) {
 
 	expect(d = malloc(sizeof(struct digest)));
 	d->hosts = NULL;
+	d->any_host = 0;
 	d->next = digests;
 	for (i = 0; i < 32; ++i) {
 		if (sscanf(dig + i * 2, "%02x", &v) <= 0) {
@@ -273,12 +275,13 @@ static int add_host(char *name) {
 	h->ai = r;
 	h->next = digests->hosts;
 	digests->hosts = h;
+	if (!strcmp(h->name, "*"))
+		digests->any_host = 1;
 	return 1;
 }
 
 static int load_conf(const char *fn, int no_cert) {
-	char what[10];
-	char buf[256];
+	char what[10], buf[256], *arg;
 	FILE *f;
 	int cert_loaded = 0;
 	digest prev, next;
@@ -288,33 +291,37 @@ static int load_conf(const char *fn, int no_cert) {
 		return 0;
 	}
 
-	while (fscanf(f, "%9s ", what) && fgets(buf, sizeof buf, f)) {
-		int n = strlen(buf);
-		while (--n >= 0 && buf[n] > 0 && buf[n] <= ' ')
-			buf[n] = 0;
+	while (fscanf(f, "%9s", what) && fgets(buf, sizeof buf, f)) {
+		for (arg = buf; *arg > 0 && *arg <= ' '; ++arg);
+		int n = strlen(arg);
+		while (--n >= 0 && arg[n] > 0 && arg[n] <= ' ')
+			arg[n] = 0;
 		++n;
 		if (!strcmp(what, "sha256")) {
-			if (!add_digest(n, buf))
-				fprintf(stderr, "%s: invalid hash %s\n", fn, buf);
+			if (!add_digest(n, arg))
+				fprintf(stderr, "%s: invalid hash %s\n", fn, arg);
 		} else if (!strcmp(what, "cert")) {
 			if (no_cert);
 			else if (cert_loaded)
 				fprintf(stderr, "%s: duplicate cert entry\n", fn);
-			else if (!load_keycert(buf))
+			else if (!load_keycert(arg))
 				return 0;
 			cert_loaded = 1;
 		} else if (!strcmp(what, "allow")) {
 			if (!digests)
 				fprintf(stderr, "%s: allow must follow hash\n", fn);
-			else if (!add_host(buf))
-				fprintf(stderr, "%s: invalid allow directive: %s\n", fn, buf);
+			else if (digests->any_host || *arg == '*' && digests->hosts)
+				fprintf(stderr, "%s: only single allow * allowed: %s\n",
+				        fn, arg);
+			else if (!*arg || !add_host(arg))
+				fprintf(stderr, "%s: invalid allow directive: %s\n", fn, arg);
 		} else if (!strcmp(what, "port")) {
-			if (!sscanf(buf, "%d", &server_port))
-				fprintf(stderr, "%s: invalid server port %s\n", fn, buf);
+			if (!sscanf(arg, "%d", &server_port))
+				fprintf(stderr, "%s: invalid server port %s\n", fn, arg);
 		} else if (!strcmp(what, "user")) {
-			struct passwd *pw = getpwnam(buf);
+			struct passwd *pw = getpwnam(arg);
 			if (!pw) {
-				fprintf(stderr, "%s: no user %s\n", fn, buf);
+				fprintf(stderr, "%s: no user %s\n", fn, arg);
 			} else {
 				use_uid = pw->pw_uid;
 				setgid(pw->pw_gid);
