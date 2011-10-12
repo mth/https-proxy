@@ -629,7 +629,7 @@ static int list_conf() {
 
 int main(int argc, char **argv) {
 	int i, list = 0;
-	const char *cfg = "/etc/https/proxy.conf";;
+	const char *cfg = "/etc/ssl/https-proxy.conf";;
 
 	for (i = 1; i < argc; ++i) {
 		if (!strcmp(argv[i], "-c") && ++i < argc)
