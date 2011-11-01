@@ -404,7 +404,7 @@ static int forward(con c, host h) {
 }
 
 static int check_host(con c, char *p) {
-	char *e;
+	char *e, was;
 	host h;
 
 	while ((p = strstr(p, "\r\n")) && strncasecmp(p += 2, "host:", 5)) {
@@ -413,8 +413,10 @@ static int check_host(con c, char *p) {
 			return closereq(c);
 		}
 	}
-	if (!p || !*(p += 5, p += strspn(p, " ")) || !(e = strchr(p, '\r')))
+	// end on : is to strip port from the host
+	if (!p || !*(p += 5, p += strspn(p, " ")) || !(e = strpbrk(p, ":\r")))
 		return 1;
+	was = *e;
 	*e = 0;
 	if (!(h = SSL_get_ex_data(c->s, host_idx)))
 	    check_cert(SSL_get_peer_certificate(c->s), &h);
@@ -424,7 +426,7 @@ static int check_host(con c, char *p) {
 	}
 	for (; h; h = h->next) {
 		if (!strcmp(h->name, p) || !*h->name) {
-			*e = '\r';
+			*e = was;
 			return forward(c, h);
 		}
 	}
