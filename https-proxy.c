@@ -33,7 +33,6 @@
 #define expect(v) if (!(v)) { fputs("** ERROR " #v "\n", stderr); exit(1); }
 #define SHA256_LEN 32
 
-void OPENSSL_cpuid_setup();
 void RAND_cleanup();
 
 typedef struct con {
@@ -139,7 +138,6 @@ static void init_context() {
 	SSL_library_init();
 	ERR_load_crypto_strings();
 	SSL_load_error_strings();
-	OPENSSL_cpuid_setup();
 	EVP_add_cipher(EVP_aes_128_cbc());
 	EVP_add_cipher(EVP_aes_192_cbc());
 	EVP_add_cipher(EVP_aes_256_cbc());
