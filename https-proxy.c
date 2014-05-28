@@ -28,6 +28,9 @@
 #include <openssl/err.h>
 #include <stdio.h>
 #include <pwd.h>
+#ifdef USE_SYSTEMD
+#include <systemd/sd-daemon.h>
+#endif
 
 #define MAX_FDS 512
 #define expect(v) if (!(v)) { fputs("** ERROR " #v "\n", stderr); exit(1); }
@@ -582,16 +585,25 @@ static void listen_sock(int port) {
 	struct sockaddr_in sa;
 	int fd, v = 1;
 
-	expect((fd = socket(PF_INET, SOCK_STREAM, IPPROTO_IP)) >= 0);
-	setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &v, sizeof v);
-	memset(&sa, 0, sizeof sa);
-	sa.sin_family = AF_INET;
-	sa.sin_port = htons(port);
-	if (bind(fd, (struct sockaddr*) &sa, sizeof sa)) {
-		fprintf(stderr, "bind %d: %s\n", port, strerror(errno));
-		exit(1);
+#ifdef USE_SYSTEMD
+	int n;
+	expect((n = sd_listen_fds(0)) <= 1);
+	if (n == 1) { // systemd socket activation
+		fd = SD_LISTEN_FDS_START + 0;
+	} else
+#endif
+	{
+		expect((fd = socket(PF_INET, SOCK_STREAM, IPPROTO_IP)) >= 0);
+		setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &v, sizeof v);
+		memset(&sa, 0, sizeof sa);
+		sa.sin_family = AF_INET;
+		sa.sin_port = htons(port);
+		if (bind(fd, (struct sockaddr*) &sa, sizeof sa)) {
+			fprintf(stderr, "bind %d: %s\n", port, strerror(errno));
+			exit(1);
+		}
+		expect(!listen(fd, 64));
 	}
-	expect(!listen(fd, 64));
 	ev[0].fd = fd;
 	ev[0].events = POLLIN;
 	fd_count = 1;

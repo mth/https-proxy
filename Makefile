@@ -1,9 +1,17 @@
-CFLAGS=-O2
-#CFLAGS=-g -O
-BINDIR=/usr/local/sbin
+CFLAGS = -O2
+#CFLAGS = -g -O
+BINDIR = /usr/local/sbin
+
+LDFLAGS = -lssl -lcrypto
+
+# autodetect systemd
+ifneq ($(shell pkg-config --exists libsystemd-daemon || echo NONE),NONE)
+CFLAGS += -DUSE_SYSTEMD $(shell pkg-config --cflags libsystemd-daemon)
+LDFLAGS += $(shell pkg-config --libs libsystemd-daemon)
+endif
 
 https-proxy: https-proxy.c
-	$(CC) -o $@ -Wall -Wno-parentheses $(CFLAGS) $+ -lssl -lcrypto
+	$(CC) -o $@ -Wall -Wno-parentheses $(CFLAGS) $+ $(LDFLAGS)
 
 clean:
 	rm -f https-proxy
