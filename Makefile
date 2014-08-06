@@ -5,7 +5,9 @@ BINDIR = /usr/local/sbin
 LDFLAGS = -lssl -lcrypto
 
 # autodetect systemd
-ifneq ($(shell pkg-config --exists libsystemd-daemon || echo NONE),NONE)
+ifeq ($(shell pkg-config --exists libsystemd-daemon || echo NONE),NONE)
+$(info * systemd-daemon library not found, disabled systemd support.)
+else
 CFLAGS += -DUSE_SYSTEMD $(shell pkg-config --cflags libsystemd-daemon)
 LDFLAGS += $(shell pkg-config --libs libsystemd-daemon)
 endif
