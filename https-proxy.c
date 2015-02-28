@@ -353,10 +353,15 @@ static void handle_ssl_error(con c, int r) {
 		ev[c->idx].events |= POLLOUT;
 	} else {
 		if (c->other) {
-			if (c->other->idx && c->other->len > 0)
+			if (c->other->idx && c->other->len > 0) {
+				char err_buf[120];
+				err_buf[0] = 0;
+				ERR_error_string_n(r, err_buf, sizeof err_buf);
+				syslog(LOG_WARNING, "SSL error: %s", err_buf);
 				shutdown(ev[c->other->idx].fd, SHUT_RD);
-			else
+			} else {
 				rm_conn(c->other);
+			}
 		}
 		rm_conn(c);
 	}
