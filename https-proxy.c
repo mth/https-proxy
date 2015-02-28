@@ -151,11 +151,10 @@ static void init_context() {
 
 	host_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
 	expect(host_idx >= 0);
+	expect(ctx = SSL_CTX_new(SSLv23_server_method()));
+	SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2);
 	if (tls_only) {
-		expect(ctx = SSL_CTX_new(TLSv1_server_method()));
-	} else {
-		expect(ctx = SSL_CTX_new(SSLv23_server_method()));
-		SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2);
+		SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv3);
 	}
 	SSL_CTX_set_cert_verify_callback(ctx, verify, NULL);
 	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_CLIENT_ONCE |
