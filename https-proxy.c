@@ -27,6 +27,7 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <stdio.h>
+#include <string.h>
 #include <pwd.h>
 #ifdef USE_SYSTEMD
 #include <systemd/sd-daemon.h>
@@ -35,8 +36,6 @@
 #define MAX_FDS 512
 #define expect(v) if (!(v)) { fputs("** ERROR " #v "\n", stderr); exit(1); }
 #define SHA256_LEN 32
-
-void RAND_cleanup();
 
 typedef struct con {
 	int idx;
@@ -64,7 +63,7 @@ static struct pollfd ev[MAX_FDS];
 static con cons[MAX_FDS];
 static int fd_count;
 static int server_port = 443;
-static int tls_only = 1;
+static int min_tls_ver = 1;
 static int host_idx;
 static uid_t use_uid;
 static digest digests;
@@ -121,17 +120,17 @@ static int verify(X509_STORE_CTX *s, void *arg) {
 	SSL *ssl;
 	int result;
 
-	s->error = X509_V_ERR_APPLICATION_VERIFICATION;
+	X509_STORE_CTX_set_error(s, X509_V_ERR_APPLICATION_VERIFICATION);
 	if (!(ssl = X509_STORE_CTX_get_app_data(s))) {
 		syslog(LOG_ERR, "Cannot get SSL object in verify callback");
 		return 0;
 	}
-	result = check_cert(s->cert, &h);
+	result = check_cert(X509_STORE_CTX_get0_cert(s), &h);
 	if (h && !SSL_set_ex_data(ssl, host_idx, h)) {
 		syslog(LOG_ERR, "SSL_set_ex_data failed");
 		return 0;
 	}
-	s->error = result;
+	X509_STORE_CTX_set_error(s, result);
 	return result == X509_V_OK;
 }
 
@@ -141,20 +140,26 @@ static void init_context() {
 	SSL_library_init();
 	ERR_load_crypto_strings();
 	SSL_load_error_strings();
+	EVP_add_cipher(EVP_aes_192_gcm());
+	EVP_add_cipher(EVP_aes_256_gcm());
+	EVP_add_cipher(EVP_aes_128_gcm());
 	EVP_add_cipher(EVP_aes_192_cbc());
 	EVP_add_cipher(EVP_aes_256_cbc());
 	EVP_add_cipher(EVP_aes_128_cbc());
 	EVP_add_digest(EVP_sha224());
 	EVP_add_digest(EVP_sha256());
-	EVP_add_digest(EVP_sha1());
 	signal(SIGPIPE, SIG_IGN);
 
 	host_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
 	expect(host_idx >= 0);
 	expect(ctx = SSL_CTX_new(SSLv23_server_method()));
 	SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2);
-	if (tls_only) {
-		SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv3);
+	SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv3);
+	if (min_tls_ver > 0) {
+		SSL_CTX_set_options(ctx, SSL_OP_NO_TLSv1);
+	}
+	if (min_tls_ver > 1) {
+		SSL_CTX_set_options(ctx, SSL_OP_NO_TLSv1_1);
 	}
 	SSL_CTX_set_cert_verify_callback(ctx, verify, NULL);
 	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_CLIENT_ONCE |
@@ -169,8 +174,6 @@ static void init_context() {
 
 static void free_context() {
 	ERR_free_strings();
-	ERR_remove_state(0);
-	RAND_cleanup();
 	EVP_cleanup();
 	CRYPTO_cleanup_all_ex_data();
 }
@@ -650,8 +653,10 @@ int main(int argc, char **argv) {
 	for (i = 1; i < argc; ++i) {
 		if (!strcmp(argv[i], "-c") && ++i < argc)
 			cfg = argv[i];
-		else if (!strcmp(argv[i], "-s3"))
-			tls_only = 0;
+		else if (!strcmp(argv[i], "-tls1"))
+			min_tls_ver = 0;
+		else if (!strcmp(argv[i], "-tls12"))
+			min_tls_ver = 2;
 		else if (!strcmp(argv[i], "-h"))
 			return help();
 		else if (!strcmp(argv[i], "-l"))

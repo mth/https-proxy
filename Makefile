@@ -1,4 +1,4 @@
-CFLAGS = -O2
+CFLAGS = -O2 -fsanitize=undefined
 #CFLAGS = -g -O
 BINDIR = /usr/local/sbin
 
