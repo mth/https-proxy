@@ -140,14 +140,17 @@ static void init_context() {
 	SSL_library_init();
 	ERR_load_crypto_strings();
 	SSL_load_error_strings();
+	EVP_add_cipher(EVP_chacha20_poly1305());
 	EVP_add_cipher(EVP_aes_192_gcm());
 	EVP_add_cipher(EVP_aes_256_gcm());
 	EVP_add_cipher(EVP_aes_128_gcm());
 	EVP_add_cipher(EVP_aes_192_cbc());
 	EVP_add_cipher(EVP_aes_256_cbc());
 	EVP_add_cipher(EVP_aes_128_cbc());
-	EVP_add_digest(EVP_sha224());
+	EVP_add_digest(EVP_sha3_256());
+	EVP_add_digest(EVP_sha3_384());
 	EVP_add_digest(EVP_sha256());
+	EVP_add_digest(EVP_sha384());
 	signal(SIGPIPE, SIG_IGN);
 
 	host_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
